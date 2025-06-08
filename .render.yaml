@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: paranoier-site
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: "7574844713:AAHY3KXRPPJbgnGqIxyE-HGYx2ecD-fvuAg"
+      - key: CHAT_IDS
+        value: 7525610412,7670045206

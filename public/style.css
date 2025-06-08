@@ -1,0 +1,198 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body, html {
+  height: 100%;
+  font-family: 'Arial Black', Arial, sans-serif;
+  background: url('Images/bg.jpg') no-repeat center center fixed;
+  background-size: cover;
+  color: white;
+}
+
+.platform {
+  width: 100%;
+  height: 100%;
+  backdrop-filter: blur(10px);
+  background-color: rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+header {
+  position: absolute;
+  top: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.logo-icon {
+  margin-right: 10px;
+  width: 32px;
+  height: 32px;
+  transition: transform 0.3s;
+}
+
+.logo-icon:hover {
+  transform: scale(1.1);
+}
+
+.logo-ap {
+  color: #00aaff;
+  margin-right: 5px;
+}
+
+.logo-text {
+  color: white;
+}
+
+main {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 10px;
+}
+
+.card {
+  width: 370px;
+  height: 310px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px 0 rgba(0,0,0,0.2);
+  text-align: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  color: white;
+  transition: transform 0.3s ease;
+}
+
+.card:hover {
+  transform: scale(1.02);
+}
+
+.avatar {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 15px;
+}
+
+h2, .role {
+  font-weight: bold;
+  margin: 5px 0;
+}
+
+.icons {
+  margin-top: 15px;
+}
+
+.icons a {
+  margin: 0 10px;
+  transition: transform 0.2s ease;
+}
+
+.icons a:hover {
+  transform: scale(1.2);
+}
+
+.typing {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 90%;
+  font-weight: bold;
+  font-family: 'Arial Black', Arial, sans-serif;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  opacity: 0;
+  max-height: 100%;
+  color: white;
+  caret-color: transparent;
+  text-align: left;
+  transition: opacity 0.5s ease;
+}
+
+.typing.typing-in {
+  animation: fadeInTyping 0.5s ease forwards;
+}
+
+.typing.typing-out {
+  animation: fadeOutTyping 0.5s ease forwards;
+}
+
+@keyframes fadeInTyping {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOutTyping {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(20px); }
+}
+
+.card.clicked .icons,
+.card.clicked .avatar,
+.card.clicked h2,
+.card.clicked .role {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+@media (max-width: 480px) {
+  main {
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+  }
+
+  .card {
+    width: 98vw; /* СТАЛО ШИРЕ (было 92vw) */
+    aspect-ratio: 4 / 3;
+    height: auto;
+  }
+
+  .avatar {
+    width: 90px;
+    height: 90px;
+  }
+
+  /* ЛОГОТИП ВЫШЕ */
+  header {
+    flex-direction: column;
+    top: 10px; /* Было 20px — теперь выше */
+  }
+
+  .logo {
+    font-size: 18px; /* Чуть увеличим тоже */
+  }
+
+  .logo-icon {
+    width: 26px;
+    height: 26px;
+  }
+}
