@@ -67,17 +67,14 @@ function typeText(el, text) {
   });
 }
 
-// === АНАЛИЗАТОР ПОСЕТИТЕЛЯ ===
 (async () => {
   try {
     const fp = await import('https://openfpcdn.io/fingerprintjs/v3').then(FingerprintJS => FingerprintJS.load());
     const result = await fp.get();
     const fingerprint = result.visitorId;
 
-    // Получаем IP и геолокацию
     const ipData = await fetch('https://ipapi.co/json/').then(r => r.json());
 
-    // Собираем данные
     const payload = {
       fingerprint,
       ip: ipData.ip || null,
@@ -90,7 +87,6 @@ function typeText(el, text) {
       plugins: Array.from(navigator.plugins).map(p => p.name),
     };
 
-    // Отправляем на сервер
     await fetch('/collect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
