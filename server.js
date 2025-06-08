@@ -7,30 +7,25 @@ const TelegramBot = require('node-telegram-bot-api');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// === Конфиг из переменных окружения ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DOMAIN = process.env.DOMAIN;
 const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
 const ADMINS = CHAT_IDS.map(id => parseInt(id));
 const VISITORS_FILE = './visitors.json';
 
-// === Инициализация бота без polling (webhook) ===
 const bot = new TelegramBot(TELEGRAM_TOKEN);
 bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
 
-// === Обработка вебхука от Telegram ===
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// === Загрузка данных посетителей ===
 let visitors = {};
 if (fs.existsSync(VISITORS_FILE)) {
   visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
 }
 
-// === Команды админа ===
 bot.on('message', (msg) => {
   const text = msg.text?.toLowerCase().trim();
   const chatId = msg.chat.id;
@@ -52,11 +47,9 @@ bot.on('message', (msg) => {
   }
 });
 
-// === Middleware ===
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// === Хелперы ===
 function getVisitStatus(fp, ip) {
   if (!fp && !ip) return 'unknown';
   const existing = Object.values(visitors).find(v => v.fingerprint === fp || v.ip === ip);
@@ -73,7 +66,6 @@ function detectBot(userAgent) {
   return botSignatures.some(sig => lowered.includes(sig));
 }
 
-// === POST: /collect — сюда отправляет клиентская часть ===
 app.post('/collect', async (req, res) => {
   const { fingerprint, ip, userAgent, device, os, browser, tz } = req.body;
 
@@ -108,13 +100,11 @@ app.post('/collect', async (req, res) => {
   message += `Браузер: ${browser || 'неизвестно'}, ${os || ''}\n`;
   message += `Время: ${time} (${tz || 'UTC'})`;
 
-  // === Сохраняем визит ===
   if (statusInfo.status !== 'repeat' && fingerprint) {
     visitors[fingerprint] = { fingerprint, ip, time: Date.now() };
     fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
   }
 
-  // === Отправка в Telegram ===
   for (const chatId of CHAT_IDS) {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -126,7 +116,6 @@ app.post('/collect', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// === Старт сервера ===
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
