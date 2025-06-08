@@ -14,7 +14,9 @@ const ADMINS = CHAT_IDS.map(id => parseInt(id));
 const VISITORS_FILE = './visitors.json';
 
 const bot = new TelegramBot(TELEGRAM_TOKEN);
-bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
+
+app.use(bodyParser.json());
+app.use(express.static('public'));
 
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
@@ -47,9 +49,6 @@ bot.on('message', (msg) => {
   }
 });
 
-app.use(bodyParser.json());
-app.use(express.static('public'));
-
 function getVisitStatus(fp, ip) {
   if (!fp && !ip) return 'unknown';
   const existing = Object.values(visitors).find(v => v.fingerprint === fp || v.ip === ip);
@@ -80,8 +79,9 @@ app.post('/collect', async (req, res) => {
     if (geoData?.status === 'success') {
       geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
     }
-  } catch {
+  } catch (err) {
     geo = 'Ошибка определения гео';
+    console.error('Geo error:', err);
   }
 
   let message = '';
@@ -106,16 +106,26 @@ app.post('/collect', async (req, res) => {
   }
 
   for (const chatId of CHAT_IDS) {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message })
-    });
+    try {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message })
+      });
+    } catch (err) {
+      console.error('Telegram send error:', err);
+    }
   }
 
   res.status(200).json({ ok: true });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
+  try {
+    await bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
+    console.log('✅ Webhook установлен');
+  } catch (err) {
+    console.error('Ошибка установки webhook:', err);
+  }
 });
