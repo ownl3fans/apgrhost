@@ -3,25 +3,34 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// === КОНФИГ ===
+// === Конфиг из переменных окружения ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const DOMAIN = process.env.DOMAIN;
 const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
-const ADMINS = CHAT_IDS.map(id => parseInt(id)); // можно использовать те же ID
+const ADMINS = CHAT_IDS.map(id => parseInt(id));
 const VISITORS_FILE = './visitors.json';
 
-// === Telegram Bot ===
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+// === Инициализация бота без polling (webhook) ===
+const bot = new TelegramBot(TELEGRAM_TOKEN);
+bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
 
-// === Загрузка визиторов ===
+// === Обработка вебхука от Telegram ===
+app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// === Загрузка данных посетителей ===
 let visitors = {};
 if (fs.existsSync(VISITORS_FILE)) {
   visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
 }
 
-// === Бот команды ===
+// === Команды админа ===
 bot.on('message', (msg) => {
   const text = msg.text?.toLowerCase().trim();
   const chatId = msg.chat.id;
@@ -38,7 +47,6 @@ bot.on('message', (msg) => {
   if (text === 'ласт') {
     const last = Object.values(visitors).slice(-1)[0];
     if (!last) return bot.sendMessage(chatId, 'Нет визитов.');
-
     const msgText = `🕒 Последний визит:\nFingerprint: ${last.fingerprint}\nIP: ${last.ip}\nВремя: ${new Date(last.time).toLocaleString('ru-RU')}`;
     bot.sendMessage(chatId, msgText);
   }
@@ -65,7 +73,7 @@ function detectBot(userAgent) {
   return botSignatures.some(sig => lowered.includes(sig));
 }
 
-// === POST: /collect ===
+// === POST: /collect — сюда отправляет клиентская часть ===
 app.post('/collect', async (req, res) => {
   const { fingerprint, ip, userAgent, device, os, browser, tz } = req.body;
 
@@ -77,7 +85,7 @@ app.post('/collect', async (req, res) => {
   let geo = 'Неизвестно';
   try {
     const geoData = await fetch(`http://ip-api.com/json/${ip}`).then(res => res.json());
-    if (geoData && geoData.status === 'success') {
+    if (geoData?.status === 'success') {
       geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
     }
   } catch {
@@ -100,26 +108,25 @@ app.post('/collect', async (req, res) => {
   message += `Браузер: ${browser || 'неизвестно'}, ${os || ''}\n`;
   message += `Время: ${time} (${tz || 'UTC'})`;
 
+  // === Сохраняем визит ===
   if (statusInfo.status !== 'repeat' && fingerprint) {
     visitors[fingerprint] = { fingerprint, ip, time: Date.now() };
     fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
   }
 
+  // === Отправка в Telegram ===
   for (const chatId of CHAT_IDS) {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message
-      })
+      body: JSON.stringify({ chat_id: chatId, text: message })
     });
   }
 
   res.status(200).json({ ok: true });
 });
 
-// === START ===
+// === Старт сервера ===
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
