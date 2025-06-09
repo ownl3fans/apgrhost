@@ -28,6 +28,7 @@ if (fs.existsSync(VISITORS_FILE)) {
   visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
 }
 
+// Команды Telegram
 bot.on('message', (msg) => {
   const text = msg.text?.toLowerCase().trim();
   const chatId = msg.chat.id;
@@ -44,7 +45,7 @@ bot.on('message', (msg) => {
   if (text === 'ласт') {
     const last = Object.values(visitors).slice(-1)[0];
     if (!last) return bot.sendMessage(chatId, 'Нет визитов.');
-    const msgText = `🕒 Последний визит:\nFingerprint: ${last.fingerprint}\nIP: ${last.ip}\nВремя: ${new Date(last.time).toLocaleString('ru-RU')}`;
+    const msgText = `🕒 Последний визит:\nFingerprint: ${last.fingerprint}\nIP: ${last.ip}\nВремя: ${new Date(last.time).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
     bot.sendMessage(chatId, msgText);
   }
 });
@@ -65,13 +66,48 @@ function detectBot(userAgent) {
   return botSignatures.some(sig => lowered.includes(sig));
 }
 
+// 🔧 Пинг от UptimeRobot или вручную
+app.get('/ping-bot', async (req, res) => {
+  const userAgent = req.headers['user-agent'] || '';
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+
+  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
+  let geo = 'Неизвестно';
+
+  try {
+    const geoData = await fetch(`http://ip-api.com/json/${ip}`).then(res => res.json());
+    if (geoData?.status === 'success') {
+      geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
+    }
+  } catch (err) {
+    console.error('Geo error:', err);
+  }
+
+  const message = `📡 ПИНГ БОТ\nТип: 🤖 Пинг бот\nIP: ${geo}\nВремя: ${time} (Europe/Moscow)`;
+
+  for (const chatId of CHAT_IDS) {
+    try {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message })
+      });
+    } catch (err) {
+      console.error('Telegram send error:', err);
+    }
+  }
+
+  res.status(200).send('pong');
+});
+
+// 🔍 Основной маршрут сбора данных
 app.post('/collect', async (req, res) => {
-  const { fingerprint, ip, userAgent, device, os, browser, tz } = req.body;
+  const { fingerprint, ip, userAgent, device, os, browser } = req.body;
 
   const statusInfo = getVisitStatus(fingerprint, ip);
   const isBot = detectBot(userAgent);
   const type = isBot ? '🤖 Бот' : '👤 Человек';
-  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: tz || 'UTC' });
+  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
 
   let geo = 'Неизвестно';
   try {
@@ -80,7 +116,6 @@ app.post('/collect', async (req, res) => {
       geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
     }
   } catch (err) {
-    geo = 'Ошибка определения гео';
     console.error('Geo error:', err);
   }
 
@@ -89,7 +124,7 @@ app.post('/collect', async (req, res) => {
     message += `🆕 НОВЫЙ ЗАХОД\n`;
   } else if (statusInfo.status === 'repeat') {
     message += `♻️ ПОВТОРНЫЙ ЗАХОД (шанс ${statusInfo.score}%)\n`;
-    message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU')}\n`;
+    message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n`;
   } else {
     message += `❔ НЕИЗВЕСТНЫЙ ЗАХОД\n`;
   }
@@ -98,7 +133,7 @@ app.post('/collect', async (req, res) => {
   message += `IP: ${geo}\n`;
   message += `Устройство: ${device || 'неизвестно'}\n`;
   message += `Браузер: ${browser || 'неизвестно'}, ${os || ''}\n`;
-  message += `Время: ${time} (${tz || 'UTC'})`;
+  message += `Время: ${time} (Europe/Moscow)`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
     visitors[fingerprint] = { fingerprint, ip, time: Date.now() };
