@@ -3,7 +3,7 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
-const UAParser = require('ua-parser-js'); // <--- Добавляем ua-parser-js
+const UAParser = require('ua-parser-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,7 +41,6 @@ if (fs.existsSync(VISITORS_FILE)) {
   }
 }
 
-// Команды Telegram
 bot.on('message', (msg) => {
   const text = msg.text?.toLowerCase().trim();
   const chatId = msg.chat.id;
@@ -79,14 +78,26 @@ function detectBot(userAgent) {
   return botSignatures.some(sig => lowered.includes(sig));
 }
 
-// 🔧 Пинг от UptimeRobot или вручную
+function guessDeviceFromUA(ua) {
+  if (!ua) return 'неизвестно';
+  const low = ua.toLowerCase();
+  if (low.includes('iphone')) return '📱 iPhone';
+  if (low.includes('ipad')) return '📱 iPad';
+  if (low.includes('android')) return '📱 Android';
+  if (low.includes('mobile')) return '📱 Смартфон';
+  if (low.includes('tablet')) return '📱 Планшет';
+  if (low.includes('windows') || low.includes('macintosh') || low.includes('linux')) return '🖥 Десктоп';
+  if (low.includes('telegram')) return '📱 Telegram WebView';
+  if (low.includes('tor')) return '🕳 TOR';
+  return 'неизвестно';
+}
+
 app.get('/ping-bot', async (req, res) => {
   const userAgent = req.headers['user-agent'] || '';
   const ip = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
-
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' }) + ' (UTC+3)';
-  let geo = 'Неизвестно';
 
+  let geo = 'Неизвестно';
   try {
     const geoData = await fetch(`http://ip-api.com/json/${ip}`).then(res => res.json());
     if (geoData?.status === 'success') {
@@ -113,28 +124,24 @@ app.get('/ping-bot', async (req, res) => {
   res.status(200).send('pong');
 });
 
-// 🔍 Основной маршрут сбора данных
 app.post('/collect', async (req, res) => {
   const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
-
-  // Получаем IP из body или из запроса
-  const realIp = ip ||
-    (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
+  const realIp = ip || (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
 
   if (!fingerprint && !realIp) {
     return res.status(400).json({ ok: false, error: 'Не указан fingerprint или ip' });
   }
 
-  // Парсим user-agent на сервере
   let parsedUA = null;
   try {
     parsedUA = userAgent ? new UAParser(userAgent) : null;
   } catch (err) {
     parsedUA = null;
   }
-  const deviceParsed = device || (parsedUA ? (parsedUA.getDevice().type || 'неизвестно') : 'неизвестно');
-  const browserParsed = browser || (parsedUA ? (parsedUA.getBrowser().name || 'неизвестно') : 'неизвестно');
-  const osParsed = os || (parsedUA ? (parsedUA.getOS().name || '') : '');
+
+  const deviceParsed = device || (parsedUA?.getDevice().model || guessDeviceFromUA(userAgent));
+  const browserParsed = browser || (parsedUA?.getBrowser().name || 'неизвестно');
+  const osParsed = os || (parsedUA?.getOS().name || '');
 
   const statusInfo = getVisitStatus(fingerprint, realIp);
   const isBot = detectBot(userAgent);
@@ -153,12 +160,12 @@ app.post('/collect', async (req, res) => {
 
   let message = '';
   if (statusInfo.status === 'new') {
-    message += `🆕 НОВЫЙ ЗАХОД\n`;
+    message += '🆕 НОВЫЙ ЗАХОД\n';
   } else if (statusInfo.status === 'repeat') {
     message += `♻️ ПОВТОРНЫЙ ЗАХОД (шанс ${statusInfo.score}%)\n`;
     message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (UTC+3)\n`;
   } else {
-    message += `❔ НЕИЗВЕСТНЫЙ ЗАХОД\n`;
+    message += '❔ НЕИЗВЕСТНЫЙ ЗАХОД\n';
   }
 
   message += `Тип: ${type}\n`;
