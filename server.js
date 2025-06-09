@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const UAParser = require('ua-parser-js');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,6 +26,7 @@ const ADMINS = CHAT_IDS.map(id => parseInt(id)).filter(Boolean);
 const VISITORS_FILE = './visitors.json';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
+app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
@@ -36,6 +38,17 @@ if (fs.existsSync(VISITORS_FILE)) {
     console.error('Ошибка чтения visitors.json:', err);
     visitors = {};
   }
+}
+
+function extractIPv4(ipString) {
+  if (!ipString) return '';
+  const ips = ipString.split(',').map(i => i.trim());
+  for (const ip of ips) {
+    // Проверка IPv4 (0-255.0-255.0-255.0-255)
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return ip;
+  }
+  // Если нет IPv4, возвращаем первый IP как fallback
+  return ips[0] || '';
 }
 
 function getVisitStatus(fp, ip) {
@@ -69,6 +82,8 @@ function guessDeviceFromUA(ua) {
 }
 
 async function getIPGeo(ip) {
+  // Если это IPv6, а не IPv4, возвращаем "Неизвестно"
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return 'Неизвестно';
   try {
     const primary = await fetch(`http://ip-api.com/json/${ip}`);
     const geoData = await primary.json();
@@ -128,7 +143,7 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
 });
 
 app.get('/ping-bot', async (req, res) => {
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
   const ua = req.headers['user-agent'] || '';
   const geo = await getIPGeo(ip);
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
@@ -146,8 +161,11 @@ app.get('/ping-bot', async (req, res) => {
 });
 
 app.post('/collect', async (req, res) => {
+  // Логируем все запросы на отладку Android/безвпн
+  console.log('Collect request:', req.body, req.headers['user-agent'], req.headers['x-forwarded-for'], req.socket.remoteAddress);
+
   const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
-  const realIp = ip || (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
+  const realIp = extractIPv4(ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress);
 
   if (!fingerprint && !realIp) {
     return res.status(400).json({ ok: false, error: 'Не указан fingerprint или ip' });
