@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const UAParser = require('ua-parser-js');
+const requestIp = require('request-ip');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,19 +12,18 @@ const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DOMAIN = process.env.DOMAIN;
 if (!TELEGRAM_TOKEN || !DOMAIN) {
-  console.error('TELEGRAM_TOKEN и DOMAIN должны быть заданы в переменных окружения!');
+  console.error('TELEGRAM_TOKEN и DOMAIN должны быть заданы!');
   process.exit(1);
 }
-const CHAT_IDS = (process.env.CHAT_IDS || '')
-  .split(',')
-  .map(id => id.trim())
-  .filter(Boolean);
+
+const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
 const ADMINS = CHAT_IDS.map(id => parseInt(id)).filter(Boolean);
 const VISITORS_FILE = './visitors.json';
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
 app.use(bodyParser.json());
+app.use(requestIp.mw());
 app.use(express.static('public'));
 
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
@@ -41,54 +41,33 @@ if (fs.existsSync(VISITORS_FILE)) {
   }
 }
 
-bot.on('message', (msg) => {
+function getTodayVisitors() {
+  const today = new Date().toISOString().slice(0, 10);
+  return Object.values(visitors).filter(v => v.time.startsWith(today));
+}
+
+bot.on('message', async (msg) => {
   const text = msg.text?.toLowerCase().trim();
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
   if (!ADMINS.includes(userId)) return;
 
-  if (text === '/start') {
-    bot.sendMessage(chatId, '✅ Сайт работает и бот на связи');
+  if (text === 'стата') {
+    const todayVisits = getTodayVisitors();
+    const total = todayVisits.length;
+    const unique = new Set(todayVisits.map(v => v.fingerprint)).size;
+    await bot.sendMessage(chatId, `📊 Статистика за сегодня:\nВсего визитов: ${total}\nУникальных: ${unique}`);
   }
 
-  if (text === 'стата') {
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0]; // формат YYYY-MM-DD
-    const visitsToday = Object.values(visitors).filter(v => v.time?.startsWith(dateStr));
-
-    const total = visitsToday.length;
-    const bots = visitsToday.filter(v => v.type === 'bot').length;
-    const humans = total - bots;
-
-    // Группировка по часу
-    const hourlyMap = {};
-    for (const v of visitsToday) {
-      const date = new Date(v.time);
-      const hour = (date.getUTCHours() + 3) % 24; // UTC+3
-      const slot = `${hour.toString().padStart(2, '0')}:00–${(hour + 1).toString().padStart(2, '0')}:00`;
-      hourlyMap[slot] = (hourlyMap[slot] || 0) + 1;
-    }
-
-    const hourlyText = Object.entries(hourlyMap)
-      .sort()
-      .map(([slot, count]) => `- ${slot} → ${count}`)
-      .join('\n');
-
-    const response = `📊 Статистика за сегодня (${dateStr.split('-').reverse().join('.')}):
-Всего визитов: ${total}
-👤 Люди: ${humans}
-🤖 Боты: ${bots}
-
-Поток за сегодня:
-${hourlyText || 'Нет данных.'}`;
-
-    bot.sendMessage(chatId, response);
+  if (text === '/start') {
+    await sendPingMessage();
+    await bot.sendMessage(chatId, '✅ Сайт проверен. Пинг отправлен.');
   }
 });
 
 function getVisitStatus(fp, ip) {
-  if (!fp && !ip) return 'unknown';
+  if (!fp && !ip) return { status: 'unknown' };
   const existing = Object.values(visitors).find(v => v.fingerprint === fp || v.ip === ip);
   if (existing) {
     const score = existing.ip === ip ? 100 : 60;
@@ -117,21 +96,32 @@ function guessDeviceFromUA(ua) {
   return 'неизвестно';
 }
 
-app.get('/ping-bot', async (req, res) => {
-  const userAgent = req.headers['user-agent'] || '';
-  const ip = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
-  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' }) + ' (UTC+3)';
-
-  let geo = 'Неизвестно';
+async function geoLookup(ip) {
   try {
-    const geoData = await fetch(`http://ip-api.com/json/${ip}`).then(res => res.json());
-    if (geoData?.status === 'success') {
-      geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
-    }
+    const res = await fetch(`http://ip-api.com/json/${ip}`);
+    const data = await res.json();
+    if (data.status === 'success') return `${data.query} — ${data.country}, ${data.city}`;
+  } catch {}
+  try {
+    const res2 = await fetch(`https://ipwhois.app/json/${ip}`);
+    const data2 = await res2.json();
+    if (!data2.success && !data2.country) throw new Error();
+    return `${data2.ip} — ${data2.country}, ${data2.city || '—'}`;
   } catch (err) {
-    console.error('Geo error:', err);
+    console.error('Geo lookup failed:', err);
+    return 'Неизвестно';
   }
+}
 
+app.get('/ping-bot', async (req, res) => {
+  await sendPingMessage();
+  res.status(200).send('pong');
+});
+
+async function sendPingMessage() {
+  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' }) + ' (UTC+3)';
+  const ip = req.clientIp || 'неизвестно';
+  const geo = await geoLookup(ip);
   const message = `📡 ПИНГ БОТ\nТип: 🤖 Пинг бот\nIP: ${geo}\nВремя: ${time}`;
 
   for (const chatId of CHAT_IDS) {
@@ -142,46 +132,32 @@ app.get('/ping-bot', async (req, res) => {
         body: JSON.stringify({ chat_id: chatId, text: message })
       });
     } catch (err) {
-      console.error('Telegram send error:', err);
+      console.error('Ошибка Telegram:', err);
     }
   }
-
-  res.status(200).send('pong');
-});
+}
 
 app.post('/collect', async (req, res) => {
-  const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
-  const realIp = ip || (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
+  const { fingerprint, userAgent, device, os, browser } = req.body || {};
+  const realIp = req.clientIp || 'неизвестно';
 
   if (!fingerprint && !realIp) {
-    return res.status(400).json({ ok: false, error: 'Не указан fingerprint или ip' });
+    return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
   }
 
   let parsedUA = null;
   try {
     parsedUA = userAgent ? new UAParser(userAgent) : null;
-  } catch (err) {
-    parsedUA = null;
-  }
+  } catch {}
 
   const deviceParsed = device || (parsedUA?.getDevice().model || guessDeviceFromUA(userAgent));
   const browserParsed = browser || (parsedUA?.getBrowser().name || 'неизвестно');
   const osParsed = os || (parsedUA?.getOS().name || '');
-
   const statusInfo = getVisitStatus(fingerprint, realIp);
   const isBot = detectBot(userAgent);
   const type = isBot ? '🤖 Бот' : '👤 Человек';
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' }) + ' (UTC+3)';
-
-  let geo = 'Неизвестно';
-  try {
-    const geoData = await fetch(`http://ip-api.com/json/${realIp}`).then(res => res.json());
-    if (geoData?.status === 'success') {
-      geo = `${geoData.query} — ${geoData.country}, ${geoData.city}`;
-    }
-  } catch (err) {
-    console.error('Geo error:', err);
-  }
+  const geo = await geoLookup(realIp);
 
   let message = '';
   if (statusInfo.status === 'new') {
@@ -193,19 +169,10 @@ app.post('/collect', async (req, res) => {
     message += '❔ НЕИЗВЕСТНЫЙ ЗАХОД\n';
   }
 
-  message += `Тип: ${type}\n`;
-  message += `IP: ${geo}\n`;
-  message += `Устройство: ${deviceParsed}\n`;
-  message += `Браузер: ${browserParsed}, ${osParsed}\n`;
-  message += `Время: ${time}`;
+  message += `Тип: ${type}\nIP: ${geo}\nУстройство: ${deviceParsed}\nБраузер: ${browserParsed}, ${osParsed}\nВремя: ${time}`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
-    visitors[fingerprint] = {
-      fingerprint,
-      ip: realIp,
-      time: new Date().toISOString(),
-      type: isBot ? 'bot' : 'human'
-    };
+    visitors[fingerprint] = { fingerprint, ip: realIp, time: new Date().toISOString() };
     try {
       fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
     } catch (err) {
@@ -234,17 +201,11 @@ app.listen(PORT, async () => {
     await bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
     console.log('✅ Webhook установлен');
   } catch (err) {
-    console.error('Ошибка установки webhook:', err);
+    console.error('Ошибка webhook:', err);
   }
 });
 
-// 🔁 Self-ping каждые 4 минуты
+// Автопинг раз в 5 минут
 setInterval(() => {
-  fetch(`${DOMAIN}/ping-bot`)
-    .then(() => console.log('🔁 Self-ping выполнен'))
-    .catch(err => console.error('Self-ping error:', err));
-}, 240_000); // 4 мин = 240000 мс
-
-    console.error('Ошибка установки webhook:', err);
-  }
-});
+  fetch(`https://${DOMAIN.replace(/^https?:\/\//, '')}/ping-bot`).catch(() => {});
+}, 5 * 60 * 1000);
