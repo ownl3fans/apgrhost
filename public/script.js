@@ -67,24 +67,74 @@ function typeText(el, text) {
   });
 }
 
+// === АНАЛИЗАТОР ПОСЕТИТЕЛЯ ===
 (async () => {
   try {
     const fp = await import('https://openfpcdn.io/fingerprintjs/v3').then(FingerprintJS => FingerprintJS.load());
     const result = await fp.get();
     const fingerprint = result.visitorId;
 
-    const ipData = await fetch('https://ipapi.co/json/').then(r => r.json());
+    const ua = navigator.userAgent;
+    const language = navigator.language;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const touchSupport = 'ontouchstart' in window;
+    const platform = navigator.platform;
+    const deviceMemory = navigator.deviceMemory || null;
+    const hardwareConcurrency = navigator.hardwareConcurrency || null;
+    const screenSize = `${screen.width}x${screen.height}`;
+
+    let ipData = {};
+    try {
+      ipData = await fetch('https://ipapi.co/json/').then(r => r.json());
+    } catch (e1) {
+      try {
+        const fallback = await fetch('https://ipwhois.app/json/').then(r => r.json());
+        ipData = {
+          ip: fallback.ip,
+          country_name: fallback.country,
+          city: fallback.city
+        };
+      } catch (e2) {
+        ipData = { ip: null, country_name: null, city: null };
+      }
+    }
+
+    const browser = (() => {
+      if (ua.includes('Edg')) return 'Edge';
+      if (ua.includes('OPR') || ua.includes('Opera')) return 'Opera';
+      if (ua.includes('Chrome')) return 'Chrome';
+      if (ua.includes('Firefox')) return 'Firefox';
+      if (ua.includes('Safari')) return 'Safari';
+      return 'Неизвестен';
+    })();
+
+    const os = (() => {
+      if (/Windows NT/.test(ua)) return 'Windows';
+      if (/Mac OS X/.test(ua)) return 'macOS';
+      if (/Android/.test(ua)) return 'Android';
+      if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+      if (/Linux/.test(ua)) return 'Linux';
+      return 'Неизвестна';
+    })();
+
+    const deviceType = /Mobi|Android/i.test(ua) ? 'Мобильное' : 'ПК';
 
     const payload = {
       fingerprint,
-      ip: ipData.ip || null,
-      country: ipData.country_name || null,
-      city: ipData.city || null,
-      userAgent: navigator.userAgent,
-      language: navigator.language,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      touchSupport: 'ontouchstart' in window,
-      plugins: Array.from(navigator.plugins).map(p => p.name),
+      ip: ipData.ip,
+      country: ipData.country_name,
+      city: ipData.city,
+      userAgent: ua,
+      language,
+      timezone,
+      platform,
+      touchSupport,
+      deviceMemory,
+      hardwareConcurrency,
+      browser,
+      os,
+      deviceType,
+      screenSize
     };
 
     await fetch('/collect', {
@@ -92,6 +142,7 @@ function typeText(el, text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+
   } catch (err) {
     console.warn('Ошибка в анализаторе:', err);
   }
