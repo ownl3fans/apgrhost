@@ -48,17 +48,42 @@ bot.on('message', (msg) => {
 
   if (!ADMINS.includes(userId)) return;
 
-  if (text === 'стата') {
-    const total = Object.keys(visitors).length;
-    const unique = new Set(Object.values(visitors).map(v => v.fingerprint)).size;
-    bot.sendMessage(chatId, `📊 Статистика:\nВсего визитов: ${total}\nУникальных: ${unique}`);
+  if (text === '/start') {
+    bot.sendMessage(chatId, '✅ Сайт работает и бот на связи');
   }
 
-  if (text === 'ласт') {
-    const last = Object.values(visitors).slice(-1)[0];
-    if (!last) return bot.sendMessage(chatId, 'Нет визитов.');
-    const msgText = `🕒 Последний визит:\nFingerprint: ${last.fingerprint}\nIP: ${last.ip}\nВремя: ${new Date(last.time).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (UTC+3)`;
-    bot.sendMessage(chatId, msgText);
+  if (text === 'стата') {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0]; // формат YYYY-MM-DD
+    const visitsToday = Object.values(visitors).filter(v => v.time?.startsWith(dateStr));
+
+    const total = visitsToday.length;
+    const bots = visitsToday.filter(v => v.type === 'bot').length;
+    const humans = total - bots;
+
+    // Группировка по часу
+    const hourlyMap = {};
+    for (const v of visitsToday) {
+      const date = new Date(v.time);
+      const hour = (date.getUTCHours() + 3) % 24; // UTC+3
+      const slot = `${hour.toString().padStart(2, '0')}:00–${(hour + 1).toString().padStart(2, '0')}:00`;
+      hourlyMap[slot] = (hourlyMap[slot] || 0) + 1;
+    }
+
+    const hourlyText = Object.entries(hourlyMap)
+      .sort()
+      .map(([slot, count]) => `- ${slot} → ${count}`)
+      .join('\n');
+
+    const response = `📊 Статистика за сегодня (${dateStr.split('-').reverse().join('.')}):
+Всего визитов: ${total}
+👤 Люди: ${humans}
+🤖 Боты: ${bots}
+
+Поток за сегодня:
+${hourlyText || 'Нет данных.'}`;
+
+    bot.sendMessage(chatId, response);
   }
 });
 
@@ -175,7 +200,12 @@ app.post('/collect', async (req, res) => {
   message += `Время: ${time}`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
-    visitors[fingerprint] = { fingerprint, ip: realIp, time: new Date().toISOString() };
+    visitors[fingerprint] = {
+      fingerprint,
+      ip: realIp,
+      time: new Date().toISOString(),
+      type: isBot ? 'bot' : 'human'
+    };
     try {
       fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
     } catch (err) {
@@ -204,6 +234,17 @@ app.listen(PORT, async () => {
     await bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
     console.log('✅ Webhook установлен');
   } catch (err) {
+    console.error('Ошибка установки webhook:', err);
+  }
+});
+
+// 🔁 Self-ping каждые 4 минуты
+setInterval(() => {
+  fetch(`${DOMAIN}/ping-bot`)
+    .then(() => console.log('🔁 Self-ping выполнен'))
+    .catch(err => console.error('Self-ping error:', err));
+}, 240_000); // 4 мин = 240000 мс
+
     console.error('Ошибка установки webhook:', err);
   }
 });
