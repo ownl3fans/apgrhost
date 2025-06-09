@@ -9,11 +9,18 @@ const PORT = process.env.PORT || 3000;
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DOMAIN = process.env.DOMAIN;
-const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
-const ADMINS = CHAT_IDS.map(id => parseInt(id));
+if (!TELEGRAM_TOKEN || !DOMAIN) {
+  console.error('TELEGRAM_TOKEN и DOMAIN должны быть заданы в переменных окружения!');
+  process.exit(1);
+}
+const CHAT_IDS = (process.env.CHAT_IDS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
+const ADMINS = CHAT_IDS.map(id => parseInt(id)).filter(Boolean);
 const VISITORS_FILE = './visitors.json';
 
-const bot = new TelegramBot(TELEGRAM_TOKEN);
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
 app.use(bodyParser.json());
 app.use(express.static('public'));
@@ -25,7 +32,12 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 
 let visitors = {};
 if (fs.existsSync(VISITORS_FILE)) {
-  visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+  try {
+    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Ошибка чтения visitors.json:', err);
+    visitors = {};
+  }
 }
 
 // Команды Telegram
@@ -69,7 +81,7 @@ function detectBot(userAgent) {
 // 🔧 Пинг от UptimeRobot или вручную
 app.get('/ping-bot', async (req, res) => {
   const userAgent = req.headers['user-agent'] || '';
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || '').trim();
 
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
   let geo = 'Неизвестно';
@@ -102,7 +114,11 @@ app.get('/ping-bot', async (req, res) => {
 
 // 🔍 Основной маршрут сбора данных
 app.post('/collect', async (req, res) => {
-  const { fingerprint, ip, userAgent, device, os, browser } = req.body;
+  const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
+
+  if (!fingerprint && !ip) {
+    return res.status(400).json({ ok: false, error: 'Не указан fingerprint или ip' });
+  }
 
   const statusInfo = getVisitStatus(fingerprint, ip);
   const isBot = detectBot(userAgent);
@@ -136,8 +152,12 @@ app.post('/collect', async (req, res) => {
   message += `Время: ${time} (Europe/Moscow)`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
-    visitors[fingerprint] = { fingerprint, ip, time: Date.now() };
-    fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
+    visitors[fingerprint] = { fingerprint, ip, time: new Date().toISOString() };
+    try {
+      fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
+    } catch (err) {
+      console.error('Ошибка записи visitors.json:', err);
+    }
   }
 
   for (const chatId of CHAT_IDS) {
