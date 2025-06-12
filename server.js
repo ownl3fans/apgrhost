@@ -7,7 +7,7 @@ const UAParser = require('ua-parser-js');
 const cors = require('cors');
 
 const app = express();
-app.set('trust proxy', true); // Важно для правильного IP в Render и других прокси
+app.set('trust proxy', true);
 
 const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -22,24 +22,24 @@ const CHAT_IDS = (process.env.CHAT_IDS || '')
   .split(',')
   .map(id => id.trim())
   .filter(Boolean);
-const ADMINS = CHAT_IDS.map(id => String(id)).filter(Boolean); // сравниваем строки!
+const ADMINS = CHAT_IDS.map(String);
+
 const VISITORS_FILE = './visitors.json';
+let visitors = {};
+if (fs.existsSync(VISITORS_FILE)) {
+  try {
+    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE, 'utf8'));
+  } catch (err) {
+    console.error('❌ Ошибка чтения visitors.json:', err);
+    visitors = {};
+  }
+}
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
-
-let visitors = {};
-if (fs.existsSync(VISITORS_FILE)) {
-  try {
-    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE, 'utf8'));
-  } catch (err) {
-    console.error('Ошибка чтения visitors.json:', err);
-    visitors = {};
-  }
-}
 
 // ---------------- ВСПОМОГАТЕЛЬНЫЕ ----------------
 
@@ -63,13 +63,12 @@ function getVisitStatus(fp, ip) {
 }
 
 function detectBot(ua) {
-  const botKeywords = ['bot', 'crawl', 'spider', 'headless', 'python', 'curl', 'wget'];
-  return botKeywords.some(k => ua?.toLowerCase().includes(k));
+  const keywords = ['bot', 'crawl', 'spider', 'headless', 'python', 'curl', 'wget'];
+  return keywords.some(k => ua?.toLowerCase().includes(k));
 }
 
 function guessDeviceFromUA(ua) {
-  if (!ua) return 'неизвестно';
-  const low = ua.toLowerCase();
+  const low = ua?.toLowerCase() || '';
   if (low.includes('iphone')) return '📱 iPhone';
   if (low.includes('ipad')) return '📱 iPad';
   if (low.includes('android')) return '📱 Android';
@@ -116,63 +115,49 @@ async function getIPGeo(ip) {
   return 'Неизвестно';
 }
 
-// ---------------- ТЕЛЕГРАМ-БОТ ----------------
+// ---------------- ОБРАБОТКА КОМАНД TG ----------------
 
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
 
-  const update = req.body;
-  if (!update.message) {
-    console.log('[TG] Нет сообщения в апдейте:', update);
-    return;
-  }
+  const msg = req.body?.message;
+  if (!msg) return;
 
-  const msg = update.message;
   const chatId = String(msg.chat.id);
+  const userId = String(msg.from?.id);
   const text = (msg.text || '').trim().toLowerCase();
-  const userId = String(msg.from.id);
-
-  console.log(`[TG] Команда: "${text}" от пользователя ${userId}`);
 
   if (!ADMINS.includes(userId)) {
-    console.log(`[TG] userId ${userId} не админ, команды игнорируются`);
+    console.log(`[TG] userId ${userId} не админ, игнор`);
     return;
   }
 
-  // Команда старт (варианты)
-  if (text === '/start' || text === 'start') {
-    try {
-      const resPing = await fetch(`${DOMAIN}/ping-bot`);
-      if (resPing.ok) {
+  console.log(`[TG] Команда "${text}" от ${userId}`);
+
+  try {
+    if (text === '/start' || text === 'start') {
+      const ping = await fetch(`${DOMAIN}/ping-bot`);
+      if (ping.ok) {
         await bot.sendMessage(chatId, '✅ Сайт пингуется.');
         await bot.sendSticker(chatId, 'CAACAgIAAxkBAAEOh-hoLLZSw6FXGfnQVZ151nkhg49KtQACLAEAAvcCyA-mm8Ap-iuJXTYE');
       } else {
-        await bot.sendMessage(chatId, `❌ Ошибка пинга (код ${resPing.status})`);
+        await bot.sendMessage(chatId, `❌ Ошибка пинга (код ${ping.status})`);
       }
-    } catch (e) {
-      console.error('[TG] Ошибка fetch /ping-bot:', e);
-      await bot.sendMessage(chatId, '❌ Ошибка при попытке пинга: ' + e.message);
+    } else if (text === 'стата' || text === '/стата') {
+      const today = new Date().toISOString().split('T')[0];
+      const todayVisits = Object.values(visitors).filter(v => v.time.startsWith(today));
+      const unique = new Set(todayVisits.map(v => v.fingerprint)).size;
+      await bot.sendMessage(chatId, `📊 Статистика за сегодня:\nВсего визитов: ${todayVisits.length}\nУникальных: ${unique}`);
+    } else {
+      await bot.sendMessage(chatId, '❓ Неизвестная команда.\nИспользуйте /start или /стата');
     }
-    return;
+  } catch (err) {
+    console.error('[TG] Ошибка обработки команды:', err);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка при выполнении команды.');
   }
-
-  // Команда стата (варианты)
-  if (text === 'стата' || text === '/стата') {
-    const today = new Date().toISOString().split('T')[0];
-    const todayVisitors = Object.values(visitors).filter(v => v.time.startsWith(today));
-    const unique = new Set(todayVisitors.map(v => v.fingerprint)).size;
-    await bot.sendMessage(
-      chatId,
-      `📊 Статистика за сегодня:\nВсего визитов: ${todayVisitors.length}\nУникальных: ${unique}`
-    );
-    return;
-  }
-
-  // Ответ на любой другой текст
-  await bot.sendMessage(chatId, 'Используйте команды /start или стата для просмотра данных');
 });
 
-// ---------------- ПИНГ ДЛЯ БОТА ----------------
+// ---------------- ПИНГ-БОТ ----------------
 
 app.get('/ping-bot', async (req, res) => {
   const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
@@ -185,7 +170,7 @@ app.get('/ping-bot', async (req, res) => {
     try {
       await bot.sendMessage(chatId, msg);
     } catch (err) {
-      console.error('Ошибка Telegram:', err);
+      console.error('Telegram send error:', err);
     }
   }
 
@@ -236,10 +221,8 @@ app.post('/collect', async (req, res) => {
     message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (UTC+3)\n`;
   } else message += '❔ НЕИЗВЕСТНЫЙ ЗАХОД\n';
 
-  message += `Тип: ${type}\n`;
-  message += `IP: ${geo}\n`;
-  message += `Устройство: ${deviceParsed}\n`;
-  message += `Браузер: ${browserParsed}, ${osParsed}\n`;
+  message += `Тип: ${type}\nIP: ${geo}\n`;
+  message += `Устройство: ${deviceParsed}\nБраузер: ${browserParsed}, ${osParsed}\n`;
   if (memory || cpu) {
     message += `RAM: ${memory || 'неизвестно'} ГБ, CPU: ${cpu || 'неизвестно'} ядер\n`;
   }
@@ -276,3 +259,4 @@ app.listen(PORT, async () => {
     console.error('Ошибка установки webhook:', err);
   }
 });
+    
