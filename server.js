@@ -7,8 +7,9 @@ const UAParser = require('ua-parser-js');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.set('trust proxy', true); // Важно для правильного IP в Render и других прокси
 
+const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DOMAIN = process.env.DOMAIN;
 
@@ -40,7 +41,8 @@ if (fs.existsSync(VISITORS_FILE)) {
   }
 }
 
-// ----------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ -------------
+// ---------------- ВСПОМОГАТЕЛЬНЫЕ ----------------
+
 function extractIPv4(ipString) {
   if (!ipString) return '';
   const ips = ipString.split(',').map(i => i.trim());
@@ -60,10 +62,9 @@ function getVisitStatus(fp, ip) {
   return { status: 'new' };
 }
 
-function detectBot(userAgent) {
-  const signatures = ['bot', 'crawl', 'spider', 'headless', 'python', 'curl', 'wget'];
-  const lowered = userAgent?.toLowerCase() || '';
-  return signatures.some(sig => lowered.includes(sig));
+function detectBot(ua) {
+  const botKeywords = ['bot', 'crawl', 'spider', 'headless', 'python', 'curl', 'wget'];
+  return botKeywords.some(k => ua?.toLowerCase().includes(k));
 }
 
 function guessDeviceFromUA(ua) {
@@ -80,23 +81,23 @@ function guessDeviceFromUA(ua) {
   return 'неизвестно';
 }
 
-function getDeviceBrand(userAgent) {
-  if (/iPhone/.test(userAgent)) return 'Apple iPhone';
-  if (/iPad/.test(userAgent)) return 'Apple iPad';
-  if (/SM-|Samsung/.test(userAgent)) return 'Samsung';
-  if (/Redmi|Xiaomi|Mi/.test(userAgent)) return 'Xiaomi';
-  if (/POCO/.test(userAgent)) return 'POCO';
-  if (/Pixel/.test(userAgent)) return 'Google Pixel';
-  if (/Huawei|HONOR/.test(userAgent)) return 'Huawei/Honor';
-  if (/OnePlus/.test(userAgent)) return 'OnePlus';
-  if (/Realme/.test(userAgent)) return 'Realme';
-  if (/Motorola|Moto/.test(userAgent)) return 'Motorola';
-  if (/Nokia/.test(userAgent)) return 'Nokia';
-  if (/Sony/.test(userAgent)) return 'Sony';
-  if (/LG/.test(userAgent)) return 'LG';
-  if (/HTC/.test(userAgent)) return 'HTC';
-  if (/ZTE/.test(userAgent)) return 'ZTE';
-  if (/Oppo/.test(userAgent)) return 'Oppo';
+function getDeviceBrand(ua) {
+  if (/iPhone/.test(ua)) return 'Apple iPhone';
+  if (/iPad/.test(ua)) return 'Apple iPad';
+  if (/SM-|Samsung/.test(ua)) return 'Samsung';
+  if (/Redmi|Xiaomi|Mi/.test(ua)) return 'Xiaomi';
+  if (/POCO/.test(ua)) return 'POCO';
+  if (/Pixel/.test(ua)) return 'Google Pixel';
+  if (/Huawei|HONOR/.test(ua)) return 'Huawei/Honor';
+  if (/OnePlus/.test(ua)) return 'OnePlus';
+  if (/Realme/.test(ua)) return 'Realme';
+  if (/Motorola|Moto/.test(ua)) return 'Motorola';
+  if (/Nokia/.test(ua)) return 'Nokia';
+  if (/Sony/.test(ua)) return 'Sony';
+  if (/LG/.test(ua)) return 'LG';
+  if (/HTC/.test(ua)) return 'HTC';
+  if (/ZTE/.test(ua)) return 'ZTE';
+  if (/Oppo/.test(ua)) return 'Oppo';
   return null;
 }
 
@@ -106,21 +107,22 @@ async function getIPGeo(ip) {
     const res = await fetch(`http://ip-api.com/json/${ip}`);
     const data = await res.json();
     if (data?.status === 'success') return `${data.query} — ${data.country}, ${data.city}`;
-  } catch (e) {}
+  } catch {}
   try {
     const res = await fetch(`https://ipwhois.app/json/${ip}`);
     const data = await res.json();
     if (data?.ip) return `${data.ip} — ${data.country}, ${data.city}`;
-  } catch (e) {}
+  } catch {}
   return 'Неизвестно';
 }
 
-// ----------- ТЕЛЕГРАМ-БОТ -----------
+// ---------------- ТЕЛЕГРАМ-БОТ ----------------
 
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
   const update = req.body;
   if (!update.message) return;
+
   const msg = update.message;
   const chatId = msg.chat.id;
   const text = (msg.text || '').trim().toLowerCase();
@@ -130,8 +132,7 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
 
   if (text === '/start') {
     const res = await fetch(`${DOMAIN}/ping-bot`);
-    const success = res.ok;
-    await bot.sendMessage(chatId, success ? '✅ Сайт пингуется.' : '❌ Ошибка пинга.');
+    await bot.sendMessage(chatId, res.ok ? '✅ Сайт пингуется.' : '❌ Ошибка пинга.');
   }
 
   if (text === 'стата') {
@@ -160,8 +161,20 @@ app.get('/ping-bot', async (req, res) => {
   res.status(200).send('pong');
 });
 
+// ---------------- СОБОР ДАННЫХ ----------------
+
 app.post('/collect', async (req, res) => {
-  const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
+  const {
+    fingerprint,
+    ip,
+    userAgent,
+    device,
+    os,
+    browser,
+    memory,
+    cpu,
+  } = req.body || {};
+
   const realIp = extractIPv4(ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress);
 
   if (!fingerprint && !realIp) {
@@ -196,6 +209,9 @@ app.post('/collect', async (req, res) => {
   message += `IP: ${geo}\n`;
   message += `Устройство: ${deviceParsed}\n`;
   message += `Браузер: ${browserParsed}, ${osParsed}\n`;
+  if (memory || cpu) {
+    message += `RAM: ${memory || 'неизвестно'} ГБ, CPU: ${cpu || 'неизвестно'} ядер\n`;
+  }
   message += `Время: ${time} (UTC+3)`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
@@ -217,6 +233,8 @@ app.post('/collect', async (req, res) => {
 
   res.status(200).json({ ok: true });
 });
+
+// ---------------- СТАРТ ----------------
 
 app.listen(PORT, async () => {
   console.log(`✅ Сервер запущен на порту ${PORT}`);
