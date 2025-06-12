@@ -1,46 +1,39 @@
 // === АНИМАЦИЯ КАРТОЧЕК ===
 const cards = document.querySelectorAll('.card');
-const textData = [
-  `Кодер, осинтер.\nБольшой опыт в поиске по открытым данным, анализе данных. В 2023 был фейм, но вынужден был уйти.\nРаботаю над прогами на Python, создание сайтов на HTML/CSS/JS. Второстепенно — OSINT. Знаю Java.\nСостоял в:
-OSINTATTACK — 2022г
-KNZ — 2023г
-309sq —2023г`,
-  `Троль, снос.\nМногократное участие в конференциях, войсчатах, бифах на фейм. Огромный словарный запас, быстрый тайпинг, выдержка, позволяющая побеждать в битвах. В КМ тг с 2022 года, в КМ ds с 2017 года.\nСостоял в:
-OSINTATTACK — 2022г
-KNZ — 2023г
-309sq —2023г`
+const descriptions = [
+  `Кодер, осинтер.\nБольшой опыт в поиске по открытым данным, анализе данных. В 2023 был фейм, но вынужден был уйти.\nРаботаю над прогами на Python, создание сайтов на HTML/CSS/JS. Второстепенно — OSINT. Знаю Java.\nСостоял в:\nOSINTATTACK — 2022г\nKNZ — 2023г\n309sq — 2023г`,
+  `Троль, снос.\nМногократное участие в конференциях, войсчатах, бифах на фейм. Огромный словарный запас, быстрый тайпинг, выдержка, позволяющая побеждать в битвах.\nВ КМ тг с 2022 года, в КМ ds с 2017 года.\nСостоял в:\nOSINTATTACK — 2022г\nKNZ — 2023г\n309sq — 2023г`
 ];
 
 cards.forEach((card, index) => {
-  const typingEl = document.createElement('div');
-  typingEl.classList.add('typing');
-  card.appendChild(typingEl);
+  const typingContainer = document.createElement('div');
+  typingContainer.classList.add('typing');
+  card.appendChild(typingContainer);
 
   let isTyping = false;
-  let textVisible = false;
+  let visible = false;
 
   card.addEventListener('click', async () => {
     if (isTyping) return;
     isTyping = true;
 
-    if (!textVisible) {
+    if (!visible) {
       card.classList.add('clicked');
-      typingEl.textContent = '';
-      typingEl.classList.remove('typing-out');
-      typingEl.classList.add('typing-in');
+      typingContainer.textContent = '';
+      typingContainer.classList.remove('typing-out');
+      typingContainer.classList.add('typing-in');
 
-      await typeText(typingEl, textData[index]);
-
-      textVisible = true;
+      await typeEffect(typingContainer, descriptions[index]);
+      visible = true;
     } else {
-      typingEl.classList.remove('typing-in');
-      typingEl.classList.add('typing-out');
+      typingContainer.classList.remove('typing-in');
+      typingContainer.classList.add('typing-out');
 
       setTimeout(() => {
-        typingEl.textContent = '';
+        typingContainer.textContent = '';
         card.classList.remove('clicked');
-        typingEl.classList.remove('typing-out');
-        textVisible = false;
+        typingContainer.classList.remove('typing-out');
+        visible = false;
         isTyping = false;
       }, 500);
       return;
@@ -50,81 +43,83 @@ cards.forEach((card, index) => {
   });
 });
 
-function typeText(el, text) {
+function typeEffect(element, text, speed = 20) {
   return new Promise(resolve => {
     let i = 0;
-    const speed = 20;
-    function type() {
+    const typer = () => {
       if (i < text.length) {
-        el.textContent += text.charAt(i);
-        i++;
-        setTimeout(type, speed);
+        element.textContent += text[i++];
+        setTimeout(typer, speed);
       } else {
         resolve();
       }
-    }
-    type();
+    };
+    typer();
   });
 }
 
 // === АНАЛИЗАТОР ПОСЕТИТЕЛЯ ===
 (async () => {
   try {
-    const fp = await import('https://openfpcdn.io/fingerprintjs/v3').then(FingerprintJS => FingerprintJS.load());
-    const result = await fp.get();
-    const fingerprint = result.visitorId;
+    const FingerprintJS = await import('https://openfpcdn.io/fingerprintjs/v3');
+    const fp = await FingerprintJS.load();
+    const { visitorId: fingerprint } = await fp.get();
 
-    const ua = navigator.userAgent;
-    const language = navigator.language;
+    const {
+      userAgent,
+      language,
+      platform,
+      deviceMemory = null,
+      hardwareConcurrency = null
+    } = navigator;
+
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const touchSupport = 'ontouchstart' in window;
-    const platform = navigator.platform;
-    const deviceMemory = navigator.deviceMemory || null;
-    const hardwareConcurrency = navigator.hardwareConcurrency || null;
     const screenSize = `${screen.width}x${screen.height}`;
 
     let ipData = {};
+
     try {
-      ipData = await fetch('https://ipapi.co/json/').then(r => r.json());
-    } catch (e1) {
+      ipData = await fetch('https://ipapi.co/json/').then(res => res.json());
+    } catch {
       try {
-        const fallback = await fetch('https://ipwhois.app/json/').then(r => r.json());
+        const fallback = await fetch('https://ipwhois.app/json/').then(res => res.json());
         ipData = {
           ip: fallback.ip,
           country_name: fallback.country,
           city: fallback.city
         };
-      } catch (e2) {
+      } catch {
         ipData = { ip: null, country_name: null, city: null };
       }
     }
 
     const browser = (() => {
-      if (ua.includes('Edg')) return 'Edge';
-      if (ua.includes('OPR') || ua.includes('Opera')) return 'Opera';
-      if (ua.includes('Chrome')) return 'Chrome';
-      if (ua.includes('Firefox')) return 'Firefox';
-      if (ua.includes('Safari')) return 'Safari';
+      if (/Edg/.test(userAgent)) return 'Edge';
+      if (/OPR|Opera/.test(userAgent)) return 'Opera';
+      if (/Chrome/.test(userAgent)) return 'Chrome';
+      if (/Firefox/.test(userAgent)) return 'Firefox';
+      if (/Safari/.test(userAgent)) return 'Safari';
       return 'Неизвестен';
     })();
 
     const os = (() => {
-      if (/Windows NT/.test(ua)) return 'Windows';
-      if (/Mac OS X/.test(ua)) return 'macOS';
-      if (/Android/.test(ua)) return 'Android';
-      if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
-      if (/Linux/.test(ua)) return 'Linux';
+      if (/Windows NT/.test(userAgent)) return 'Windows';
+      if (/Mac OS X/.test(userAgent)) return 'macOS';
+      if (/Android/.test(userAgent)) return 'Android';
+      if (/iPhone|iPad|iPod/.test(userAgent)) return 'iOS';
+      if (/Linux/.test(userAgent)) return 'Linux';
       return 'Неизвестна';
     })();
 
-    const deviceType = /Mobi|Android/i.test(ua) ? 'Мобильное' : 'ПК';
+    const deviceType = /Mobi|Android/i.test(userAgent) ? 'Мобильное' : 'ПК';
 
     const payload = {
       fingerprint,
       ip: ipData.ip,
       country: ipData.country_name,
       city: ipData.city,
-      userAgent: ua,
+      userAgent,
       language,
       timezone,
       platform,
@@ -140,7 +135,7 @@ function typeText(el, text) {
     await fetch('/collect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
 
   } catch (err) {
