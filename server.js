@@ -5,9 +5,10 @@ const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const UAParser = require('ua-parser-js');
 const cors = require('cors');
+const requestIp = require('request-ip');
 
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', true); // Для корректного IP через x-forwarded-for
 
 const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -22,9 +23,10 @@ const CHAT_IDS = (process.env.CHAT_IDS || '')
   .split(',')
   .map(id => id.trim())
   .filter(Boolean);
-const ADMINS = CHAT_IDS.map(String);
 
+const ADMINS = CHAT_IDS.map(String);
 const VISITORS_FILE = './visitors.json';
+
 let visitors = {};
 if (fs.existsSync(VISITORS_FILE)) {
   try {
@@ -41,7 +43,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// ---------------- ВСПОМОГАТЕЛЬНЫЕ ----------------
+// ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 
 function extractIPv4(ipString) {
   if (!ipString) return '';
@@ -68,7 +70,7 @@ function detectBot(ua) {
 }
 
 function guessDeviceFromUA(ua) {
-  const low = ua?.toLowerCase() || '';
+  const low = (ua || '').toLowerCase();
   if (low.includes('iphone')) return '📱 iPhone';
   if (low.includes('ipad')) return '📱 iPad';
   if (low.includes('android')) return '📱 Android';
@@ -80,7 +82,7 @@ function guessDeviceFromUA(ua) {
   return 'неизвестно';
 }
 
-function getDeviceBrand(ua) {
+function getDeviceBrand(ua = '') {
   if (/iPhone/.test(ua)) return 'Apple iPhone';
   if (/iPad/.test(ua)) return 'Apple iPad';
   if (/SM-|Samsung/.test(ua)) return 'Samsung';
@@ -115,11 +117,10 @@ async function getIPGeo(ip) {
   return 'Неизвестно';
 }
 
-// ---------------- ОБРАБОТКА КОМАНД TG ----------------
+// ---------- TG: Команды ----------
 
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
-
   const msg = req.body?.message;
   if (!msg) return;
 
@@ -127,41 +128,30 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   const userId = String(msg.from?.id);
   const text = (msg.text || '').trim().toLowerCase();
 
-  if (!ADMINS.includes(userId)) {
-    console.log(`[TG] userId ${userId} не админ, игнор`);
-    return;
-  }
-
-  console.log(`[TG] Команда "${text}" от ${userId}`);
+  if (!ADMINS.includes(userId)) return;
 
   try {
-    if (text === '/start' || text === 'start') {
+    if (text === '/start') {
       const ping = await fetch(`${DOMAIN}/ping-bot`);
-      if (ping.ok) {
-        await bot.sendMessage(chatId, '✅ Сайт пингуется.');
-        await bot.sendSticker(chatId, 'CAACAgIAAxkBAAEOh-hoLLZSw6FXGfnQVZ151nkhg49KtQACLAEAAvcCyA-mm8Ap-iuJXTYE');
-      } else {
-        await bot.sendMessage(chatId, `❌ Ошибка пинга (код ${ping.status})`);
-      }
-    } else if (text === 'стата' || text === '/стата') {
+      await bot.sendMessage(chatId, ping.ok ? '✅ Сайт пингуется.' : `❌ Ошибка пинга (${ping.status})`);
+    } else if (text === '/stats' || text === 'стата') {
       const today = new Date().toISOString().split('T')[0];
       const todayVisits = Object.values(visitors).filter(v => v.time.startsWith(today));
       const unique = new Set(todayVisits.map(v => v.fingerprint)).size;
-      await bot.sendMessage(chatId, `📊 Статистика за сегодня:\nВсего визитов: ${todayVisits.length}\nУникальных: ${unique}`);
+      await bot.sendMessage(chatId, `📊 За сегодня:\nВсего: ${todayVisits.length}\nУникальных: ${unique}`);
     } else {
-      await bot.sendMessage(chatId, '❓ Неизвестная команда.\nИспользуйте /start или /стата');
+      await bot.sendMessage(chatId, '❓ Неизвестная команда. Используй /start или стата');
     }
   } catch (err) {
-    console.error('[TG] Ошибка обработки команды:', err);
-    await bot.sendMessage(chatId, '❌ Произошла ошибка при выполнении команды.');
+    console.error('TG command error:', err);
+    await bot.sendMessage(chatId, '❌ Ошибка выполнения команды.');
   }
 });
 
-// ---------------- ПИНГ-БОТ ----------------
+// ---------- Ping ----------
 
 app.get('/ping-bot', async (req, res) => {
-  const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
-  const ua = req.headers['user-agent'] || '';
+  const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || requestIp.getClientIp(req));
   const geo = await getIPGeo(ip);
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
 
@@ -169,15 +159,14 @@ app.get('/ping-bot', async (req, res) => {
   for (const chatId of CHAT_IDS) {
     try {
       await bot.sendMessage(chatId, msg);
-    } catch (err) {
-      console.error('Telegram send error:', err);
+    } catch (e) {
+      console.error('Telegram send error:', e);
     }
   }
-
   res.status(200).send('pong');
 });
 
-// ---------------- СОБОР ДАННЫХ ----------------
+// ---------- Аналитика ----------
 
 app.post('/collect', async (req, res) => {
   const {
@@ -186,16 +175,17 @@ app.post('/collect', async (req, res) => {
     userAgent,
     device,
     os,
-    browser,
-    memory,
-    cpu,
+    browser
   } = req.body || {};
 
-  const realIp = extractIPv4(ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress);
+  const realIp = extractIPv4(
+    ip ||
+    req.headers['x-forwarded-for'] ||
+    req.socket.remoteAddress ||
+    requestIp.getClientIp(req)
+  );
 
-  if (!fingerprint && !realIp) {
-    return res.status(400).json({ ok: false, error: 'Нет fingerprint или IP' });
-  }
+  if (!fingerprint && !realIp) return res.status(400).json({ ok: false, error: 'Нет fingerprint или IP' });
 
   let parsedUA = null;
   try {
@@ -215,48 +205,51 @@ app.post('/collect', async (req, res) => {
   const geo = await getIPGeo(realIp);
 
   let message = '';
-  if (statusInfo.status === 'new') message += '🆕 НОВЫЙ ЗАХОД\n';
-  else if (statusInfo.status === 'repeat') {
+  if (statusInfo.status === 'new') {
+    message += '🆕 НОВЫЙ ЗАХОД\n';
+  } else if (statusInfo.status === 'repeat') {
     message += `♻️ ПОВТОРНЫЙ ЗАХОД (шанс ${statusInfo.score}%)\n`;
-    message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (UTC+3)\n`;
-  } else message += '❔ НЕИЗВЕСТНЫЙ ЗАХОД\n';
+    message += `Последний визит: ${new Date(statusInfo.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n`;
+  } else {
+    message += '❔ НЕИЗВЕСТНЫЙ ЗАХОД\n';
+  }
 
   message += `Тип: ${type}\nIP: ${geo}\n`;
   message += `Устройство: ${deviceParsed}\nБраузер: ${browserParsed}, ${osParsed}\n`;
-  if (memory || cpu) {
-    message += `RAM: ${memory || 'неизвестно'} ГБ, CPU: ${cpu || 'неизвестно'} ядер\n`;
-  }
   message += `Время: ${time} (UTC+3)`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
-    visitors[fingerprint] = { fingerprint, ip: realIp, time: new Date().toISOString() };
+    visitors[fingerprint] = {
+      fingerprint,
+      ip: realIp,
+      time: new Date().toISOString()
+    };
     try {
       fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
     } catch (err) {
-      console.error('Ошибка записи visitors.json:', err);
+      console.error('❌ Ошибка записи visitors.json:', err);
     }
   }
 
   for (const chatId of CHAT_IDS) {
     try {
       await bot.sendMessage(chatId, message);
-    } catch (err) {
-      console.error('Telegram send error:', err);
+    } catch (e) {
+      console.error('Telegram send error:', e);
     }
   }
 
   res.status(200).json({ ok: true });
 });
 
-// ---------------- СТАРТ ----------------
+// ---------- Старт ----------
 
 app.listen(PORT, async () => {
   console.log(`✅ Сервер запущен на порту ${PORT}`);
   try {
     await bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
-    console.log('✅ Webhook установлен');
+    console.log('✅ Webhook Telegram установлен');
   } catch (err) {
-    console.error('Ошибка установки webhook:', err);
+    console.error('❌ Ошибка установки Webhook:', err);
   }
 });
-    
