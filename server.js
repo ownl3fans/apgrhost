@@ -22,7 +22,7 @@ const CHAT_IDS = (process.env.CHAT_IDS || '')
   .split(',')
   .map(id => id.trim())
   .filter(Boolean);
-const ADMINS = CHAT_IDS.map(id => parseInt(id)).filter(Boolean);
+const ADMINS = CHAT_IDS.map(id => String(id)).filter(Boolean); // сравниваем строки!
 const VISITORS_FILE = './visitors.json';
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
@@ -120,28 +120,59 @@ async function getIPGeo(ip) {
 
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
+
   const update = req.body;
-  if (!update.message) return;
-
-  const msg = update.message;
-  const chatId = msg.chat.id;
-  const text = (msg.text || '').trim().toLowerCase();
-  const userId = msg.from.id;
-
-  if (!ADMINS.includes(userId)) return;
-
-  if (text === '/start') {
-    const res = await fetch(`${DOMAIN}/ping-bot`);
-    await bot.sendMessage(chatId, res.ok ? '✅ Сайт пингуется.' : '❌ Ошибка пинга.');
+  if (!update.message) {
+    console.log('[TG] Нет сообщения в апдейте:', update);
+    return;
   }
 
-  if (text === 'стата') {
+  const msg = update.message;
+  const chatId = String(msg.chat.id);
+  const text = (msg.text || '').trim().toLowerCase();
+  const userId = String(msg.from.id);
+
+  console.log(`[TG] Команда: "${text}" от пользователя ${userId}`);
+
+  if (!ADMINS.includes(userId)) {
+    console.log(`[TG] userId ${userId} не админ, команды игнорируются`);
+    return;
+  }
+
+  // Команда старт (варианты)
+  if (text === '/start' || text === 'start') {
+    try {
+      const resPing = await fetch(`${DOMAIN}/ping-bot`);
+      if (resPing.ok) {
+        await bot.sendMessage(chatId, '✅ Сайт пингуется.');
+        await bot.sendSticker(chatId, 'CAACAgIAAxkBAAEOh-hoLLZSw6FXGfnQVZ151nkhg49KtQACLAEAAvcCyA-mm8Ap-iuJXTYE');
+      } else {
+        await bot.sendMessage(chatId, `❌ Ошибка пинга (код ${resPing.status})`);
+      }
+    } catch (e) {
+      console.error('[TG] Ошибка fetch /ping-bot:', e);
+      await bot.sendMessage(chatId, '❌ Ошибка при попытке пинга: ' + e.message);
+    }
+    return;
+  }
+
+  // Команда стата (варианты)
+  if (text === 'стата' || text === '/стата') {
     const today = new Date().toISOString().split('T')[0];
     const todayVisitors = Object.values(visitors).filter(v => v.time.startsWith(today));
     const unique = new Set(todayVisitors.map(v => v.fingerprint)).size;
-    await bot.sendMessage(chatId, `📊 Статистика за сегодня:\nВсего визитов: ${todayVisitors.length}\nУникальных: ${unique}`);
+    await bot.sendMessage(
+      chatId,
+      `📊 Статистика за сегодня:\nВсего визитов: ${todayVisitors.length}\nУникальных: ${unique}`
+    );
+    return;
   }
+
+  // Ответ на любой другой текст
+  await bot.sendMessage(chatId, 'Используйте команды /start или стата для просмотра данных');
 });
+
+// ---------------- ПИНГ ДЛЯ БОТА ----------------
 
 app.get('/ping-bot', async (req, res) => {
   const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
