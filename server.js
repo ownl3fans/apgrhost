@@ -5,10 +5,9 @@ const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const UAParser = require('ua-parser-js');
 const cors = require('cors');
-const requestIp = require('request-ip');
 
 const app = express();
-app.set('trust proxy', true); // Для корректного IP через x-forwarded-for
+app.set('trust proxy', true);
 
 const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -43,8 +42,6 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
-
 function extractIPv4(ipString) {
   if (!ipString) return '';
   const ips = ipString.split(',').map(i => i.trim());
@@ -70,7 +67,7 @@ function detectBot(ua) {
 }
 
 function guessDeviceFromUA(ua) {
-  const low = (ua || '').toLowerCase();
+  const low = ua?.toLowerCase() || '';
   if (low.includes('iphone')) return '📱 iPhone';
   if (low.includes('ipad')) return '📱 iPad';
   if (low.includes('android')) return '📱 Android';
@@ -82,7 +79,7 @@ function guessDeviceFromUA(ua) {
   return 'неизвестно';
 }
 
-function getDeviceBrand(ua = '') {
+function getDeviceBrand(ua) {
   if (/iPhone/.test(ua)) return 'Apple iPhone';
   if (/iPad/.test(ua)) return 'Apple iPad';
   if (/SM-|Samsung/.test(ua)) return 'Samsung';
@@ -117,8 +114,6 @@ async function getIPGeo(ip) {
   return 'Неизвестно';
 }
 
-// ---------- TG: Команды ----------
-
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
   const msg = req.body?.message;
@@ -140,7 +135,7 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
       const unique = new Set(todayVisits.map(v => v.fingerprint)).size;
       await bot.sendMessage(chatId, `📊 За сегодня:\nВсего: ${todayVisits.length}\nУникальных: ${unique}`);
     } else {
-      await bot.sendMessage(chatId, '❓ Неизвестная команда. Используй /start или стата');
+      await bot.sendMessage(chatId, '❓ Команда не распознана. Используй /start или стата');
     }
   } catch (err) {
     console.error('TG command error:', err);
@@ -148,10 +143,8 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   }
 });
 
-// ---------- Ping ----------
-
 app.get('/ping-bot', async (req, res) => {
-  const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress || requestIp.getClientIp(req));
+  const ip = extractIPv4(req.headers['x-forwarded-for'] || req.socket.remoteAddress);
   const geo = await getIPGeo(ip);
   const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
 
@@ -166,25 +159,10 @@ app.get('/ping-bot', async (req, res) => {
   res.status(200).send('pong');
 });
 
-// ---------- Аналитика ----------
-
 app.post('/collect', async (req, res) => {
-  const {
-    fingerprint,
-    ip,
-    userAgent,
-    device,
-    os,
-    browser
-  } = req.body || {};
+  const { fingerprint, ip, userAgent, device, os, browser } = req.body || {};
 
-  const realIp = extractIPv4(
-    ip ||
-    req.headers['x-forwarded-for'] ||
-    req.socket.remoteAddress ||
-    requestIp.getClientIp(req)
-  );
-
+  const realIp = extractIPv4(ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress);
   if (!fingerprint && !realIp) return res.status(400).json({ ok: false, error: 'Нет fingerprint или IP' });
 
   let parsedUA = null;
@@ -192,9 +170,18 @@ app.post('/collect', async (req, res) => {
     parsedUA = userAgent ? new UAParser(userAgent) : null;
   } catch {}
 
-  const brand = getDeviceBrand(userAgent || '');
+  const vendor = parsedUA?.getDevice().vendor || getDeviceBrand(userAgent) || '';
   const model = parsedUA?.getDevice().model || '';
-  const deviceParsed = device || (brand ? `${brand} ${model}`.trim() : model || guessDeviceFromUA(userAgent));
+  const typeUA = parsedUA?.getDevice().type || '';
+
+  let deviceParsed = device || '';
+  if (!deviceParsed) {
+    deviceParsed = [vendor, model].filter(Boolean).join(' ');
+    if (!deviceParsed) {
+      deviceParsed = typeUA ? `${guessDeviceFromUA(userAgent)} (${typeUA})` : guessDeviceFromUA(userAgent);
+    }
+  }
+
   const browserParsed = browser || parsedUA?.getBrowser().name || 'неизвестно';
   const osParsed = os || parsedUA?.getOS().name || 'неизвестно';
 
@@ -241,8 +228,6 @@ app.post('/collect', async (req, res) => {
 
   res.status(200).json({ ok: true });
 });
-
-// ---------- Старт ----------
 
 app.listen(PORT, async () => {
   console.log(`✅ Сервер запущен на порту ${PORT}`);
