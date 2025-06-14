@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const fs = require('fs');
 const fetch = require('node-fetch');
@@ -8,23 +9,21 @@ const cors = require('cors');
 
 const app = express();
 app.set('trust proxy', true);
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DOMAIN = process.env.DOMAIN;
+const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
+const ADMINS = CHAT_IDS.map(String);
+const VISITORS_FILE = './visitors.json';
 
 if (!TELEGRAM_TOKEN || !DOMAIN) {
   console.error('❌ TELEGRAM_TOKEN и DOMAIN обязательны!');
   process.exit(1);
 }
-
-const CHAT_IDS = (process.env.CHAT_IDS || '')
-  .split(',')
-  .map(id => id.trim())
-  .filter(Boolean);
-
-const ADMINS = CHAT_IDS.map(String);
-const VISITORS_FILE = './visitors.json';
 
 let visitors = {};
 if (fs.existsSync(VISITORS_FILE)) {
@@ -37,10 +36,6 @@ if (fs.existsSync(VISITORS_FILE)) {
 }
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
-
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static('public'));
 
 function extractIPv4(ipString) {
   if (!ipString) return '';
@@ -62,41 +57,7 @@ function getVisitStatus(fp, ip) {
 }
 
 function detectBot(ua) {
-  const keywords = ['bot', 'crawl', 'spider', 'headless', 'python', 'curl', 'wget'];
-  return keywords.some(k => ua?.toLowerCase().includes(k));
-}
-
-function guessDeviceFromUA(ua) {
-  const low = ua?.toLowerCase() || '';
-  if (low.includes('iphone')) return '📱 iPhone';
-  if (low.includes('ipad')) return '📱 iPad';
-  if (low.includes('android')) return '📱 Android';
-  if (low.includes('mobile')) return '📱 Смартфон';
-  if (low.includes('tablet')) return '📱 Планшет';
-  if (low.includes('telegram')) return '📱 Telegram WebView';
-  if (low.includes('windows') || low.includes('macintosh') || low.includes('linux')) return '🖥 Десктоп';
-  if (low.includes('tor')) return '🕳 TOR';
-  return 'неизвестно';
-}
-
-function getDeviceBrand(ua) {
-  if (/iPhone/.test(ua)) return 'Apple iPhone';
-  if (/iPad/.test(ua)) return 'Apple iPad';
-  if (/SM-|Samsung/.test(ua)) return 'Samsung';
-  if (/Redmi|Xiaomi|Mi/.test(ua)) return 'Xiaomi';
-  if (/POCO/.test(ua)) return 'POCO';
-  if (/Pixel/.test(ua)) return 'Google Pixel';
-  if (/Huawei|HONOR/.test(ua)) return 'Huawei/Honor';
-  if (/OnePlus/.test(ua)) return 'OnePlus';
-  if (/Realme/.test(ua)) return 'Realme';
-  if (/Motorola|Moto/.test(ua)) return 'Motorola';
-  if (/Nokia/.test(ua)) return 'Nokia';
-  if (/Sony/.test(ua)) return 'Sony';
-  if (/LG/.test(ua)) return 'LG';
-  if (/HTC/.test(ua)) return 'HTC';
-  if (/ZTE/.test(ua)) return 'ZTE';
-  if (/Oppo/.test(ua)) return 'Oppo';
-  return null;
+  return /bot|crawl|spider|headless|python|curl|wget/i.test(ua);
 }
 
 async function getIPGeo(ip) {
@@ -114,6 +75,12 @@ async function getIPGeo(ip) {
   return 'Неизвестно';
 }
 
+function extractDeviceModel(ua) {
+  const match = ua.match(/\b((Redmi|POCO|Mi|Xiaomi|Realme|Vivo|Samsung|SM|OnePlus|Pixel|Moto|Nokia)[-\s]?[^\s;\/\(\)]+)/i);
+  if (match) return match[1].replace(/Build.*/i, '').trim();
+  return null;
+}
+
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   res.sendStatus(200);
   const msg = req.body?.message;
@@ -122,20 +89,19 @@ app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
   const chatId = String(msg.chat.id);
   const userId = String(msg.from?.id);
   const text = (msg.text || '').trim().toLowerCase();
-
   if (!ADMINS.includes(userId)) return;
 
   try {
     if (text === '/start') {
       const ping = await fetch(`${DOMAIN}/ping-bot`);
       await bot.sendMessage(chatId, ping.ok ? '✅ Сайт пингуется.' : `❌ Ошибка пинга (${ping.status})`);
-    } else if (text === '/stats' || text === 'стата') {
+    } else if (text === '/stats') {
       const today = new Date().toISOString().split('T')[0];
       const todayVisits = Object.values(visitors).filter(v => v.time.startsWith(today));
       const unique = new Set(todayVisits.map(v => v.fingerprint)).size;
       await bot.sendMessage(chatId, `📊 За сегодня:\nВсего: ${todayVisits.length}\nУникальных: ${unique}`);
     } else {
-      await bot.sendMessage(chatId, '❓ Команда не распознана. Используй /start или стата');
+      await bot.sendMessage(chatId, '❓ Команда не распознана. Используй /start или /stats');
     }
   } catch (err) {
     console.error('TG command error:', err);
@@ -170,28 +136,18 @@ app.post('/collect', async (req, res) => {
     parsedUA = userAgent ? new UAParser(userAgent) : null;
   } catch {}
 
-  const vendor = parsedUA?.getDevice().vendor || getDeviceBrand(userAgent) || '';
-  const model = parsedUA?.getDevice().model || '';
-  const typeUA = parsedUA?.getDevice().type || '';
+  let vendor = parsedUA?.getDevice().vendor || '';
+  let model = parsedUA?.getDevice().model || '';
 
-  let deviceParsed = device || '';
-  if (!deviceParsed) {
-    if (vendor && model) {
-      deviceParsed = `${vendor} ${model}`;
-    } else {
-      const guess = guessDeviceFromUA(userAgent);
-      deviceParsed = typeUA ? `${guess} (${typeUA})` : guess;
-    }
-
-    const uaLower = userAgent?.toLowerCase() || '';
-    const match = uaLower.match(/(redmi|poco|mi|xiaomi)[\s\-]?([a-z0-9\s\-]+)/i);
-    if (match) {
-      const brand = match[1].charAt(0).toUpperCase() + match[1].slice(1);
-      const model = match[2].trim().replace(/\s+build.*/i, '');
-      deviceParsed = `${brand} ${model}`;
+  if (!model || model.toLowerCase() === 'mobile') {
+    const extracted = extractDeviceModel(userAgent);
+    if (extracted) {
+      model = extracted;
+      vendor = '';
     }
   }
 
+  const deviceParsed = [vendor, model].filter(Boolean).join(' ') || '📱 Android';
   const browserParsed = browser || parsedUA?.getBrowser().name || 'неизвестно';
   const osParsed = os || parsedUA?.getOS().name || 'неизвестно';
 
