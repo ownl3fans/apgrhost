@@ -59,14 +59,14 @@ function typeEffect(element, text, speed = 20) {
     const { visitorId: fingerprint } = await fp.get();
 
     const {
-      userAgent,
-      language,
-      platform,
+      userAgent = '',
+      language = 'Неизвестен',
+      platform = 'Неизвестна',
       deviceMemory = null,
       hardwareConcurrency = null
     } = navigator;
 
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Неизвестна';
     const touchSupport = 'ontouchstart' in window;
     const screenSize = `${screen.width}x${screen.height}`;
 
@@ -93,12 +93,13 @@ function typeEffect(element, text, speed = 20) {
     const browser = (() => {
       if (/EdgA|EdgiOS|Edg\//.test(userAgent)) return 'Edge';
       if (/SamsungBrowser/.test(userAgent)) return 'Samsung Internet';
-      if (/OPR|Opera/.test(userAgent)) return 'Opera';
       if (/UCBrowser/.test(userAgent)) return 'UC Browser';
-      if (/CriOS|Chrome/.test(userAgent)) return 'Chrome';
+      if (/OPR|Opera/.test(userAgent)) return 'Opera';
+      if (/CriOS/.test(userAgent)) return 'Chrome (iOS)';
+      if (/Chrome/.test(userAgent)) return 'Chrome';
       if (/Firefox/.test(userAgent)) return 'Firefox';
       if (/Safari/.test(userAgent)) return 'Safari';
-      return 'Неизвестен';
+      return userAgent ? 'Неизвестен' : 'Пустой UA';
     })();
 
     const os = (() => {
@@ -107,17 +108,16 @@ function typeEffect(element, text, speed = 20) {
       if (/Android/.test(userAgent)) return 'Android';
       if (/iPhone|iPad|iPod/.test(userAgent)) return 'iOS';
       if (/Linux/.test(userAgent)) return 'Linux';
-      return 'Неизвестна';
+      return userAgent ? 'Неизвестна' : 'Пустой UA';
     })();
 
     const getModel = () => {
+      if (!userAgent) return 'Пустой UA';
       const ua = userAgent.toLowerCase();
       const match = ua.match(/\(([^)]+)\)/);
-      if (!match) return null;
+      if (!match) return 'Не удалось извлечь UA блок';
 
       const raw = match[1];
-
-      // Бренды по ключевым словам
       const brands = [
         'xiaomi', 'redmi', 'poco',
         'realme', 'vivo', 'oppo',
@@ -133,7 +133,7 @@ function typeEffect(element, text, speed = 20) {
         return model || found;
       }
 
-      return null;
+      return 'Не определено';
     };
 
     const deviceModel = getModel();
@@ -141,10 +141,10 @@ function typeEffect(element, text, speed = 20) {
 
     const payload = {
       fingerprint,
-      ip: ipData.ip,
-      country: ipData.country_name,
-      city: ipData.city,
-      userAgent,
+      ip: ipData.ip || 'Неизвестен',
+      country: ipData.country_name || 'Неизвестна',
+      city: ipData.city || 'Неизвестен',
+      userAgent: userAgent || 'Пустой UA',
       language,
       timezone,
       platform,
@@ -167,4 +167,4 @@ function typeEffect(element, text, speed = 20) {
   } catch (err) {
     console.warn('Ошибка в анализаторе:', err);
   }
-})();
+})()
