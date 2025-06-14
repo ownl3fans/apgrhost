@@ -86,15 +86,16 @@ function typeEffect(element, text, speed = 20) {
       }
     }
 
-    // Резервная кука с IP (может помочь WebView)
     if (ipData.ip) {
-      document.cookie = `ip=${ipData.ip}; path=/; max-age=1800`; // 30 мин
+      document.cookie = `ip=${ipData.ip}; path=/; max-age=1800`;
     }
 
     const browser = (() => {
-      if (/Edg/.test(userAgent)) return 'Edge';
+      if (/EdgA|EdgiOS|Edg\//.test(userAgent)) return 'Edge';
+      if (/SamsungBrowser/.test(userAgent)) return 'Samsung Internet';
       if (/OPR|Opera/.test(userAgent)) return 'Opera';
-      if (/Chrome/.test(userAgent)) return 'Chrome';
+      if (/UCBrowser/.test(userAgent)) return 'UC Browser';
+      if (/CriOS|Chrome/.test(userAgent)) return 'Chrome';
       if (/Firefox/.test(userAgent)) return 'Firefox';
       if (/Safari/.test(userAgent)) return 'Safari';
       return 'Неизвестен';
@@ -109,7 +110,34 @@ function typeEffect(element, text, speed = 20) {
       return 'Неизвестна';
     })();
 
-    const deviceType = /Mobi|Android/i.test(userAgent) ? 'Мобильное' : 'ПК';
+    const getModel = () => {
+      const ua = userAgent.toLowerCase();
+      const match = ua.match(/\(([^)]+)\)/);
+      if (!match) return null;
+
+      const raw = match[1];
+
+      // Бренды по ключевым словам
+      const brands = [
+        'xiaomi', 'redmi', 'poco',
+        'realme', 'vivo', 'oppo',
+        'samsung', 'huawei', 'honor',
+        'nokia', 'lenovo', 'oneplus',
+        'sony', 'meizu', 'zte',
+        'tecno', 'infinix', 'doogee'
+      ];
+
+      const found = brands.find(b => raw.includes(b));
+      if (found) {
+        const model = raw.split(';').map(s => s.trim()).find(s => s.toLowerCase().includes(found));
+        return model || found;
+      }
+
+      return null;
+    };
+
+    const deviceModel = getModel();
+    const deviceType = /Mobi|Android|iPhone|iPad/i.test(userAgent) ? 'Мобильное' : 'ПК';
 
     const payload = {
       fingerprint,
@@ -126,6 +154,7 @@ function typeEffect(element, text, speed = 20) {
       browser,
       os,
       deviceType,
+      deviceModel,
       screenSize
     };
 
