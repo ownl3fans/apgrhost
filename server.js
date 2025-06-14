@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const fs = require('fs');
 const fetch = require('node-fetch');
@@ -37,6 +36,31 @@ if (fs.existsSync(VISITORS_FILE)) {
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
+const knownMobileVendors = [
+  'Xiaomi', 'Redmi', 'POCO', 'Mi', 'Realme', 'Vivo', 'Oppo', 'Samsung', 'SM', 'OnePlus',
+  'Pixel', 'Nokia', 'Motorola', 'Moto', 'Huawei', 'Honor', 'Asus', 'Lenovo'
+];
+
+function extractDeviceModel(ua) {
+  const regex = new RegExp(`\\b((${knownMobileVendors.join('|')})[-\\s]?[\\w\\d\\s\\+]+)`, 'i');
+  const match = ua.match(regex);
+  if (match) return match[1].replace(/Build.*/i, '').trim();
+  return null;
+}
+
+function detectBrowserType(ua) {
+  const mobileIndicators = ['Mobile', 'Android', 'iPhone', 'iPad', 'iPod', 'Windows Phone'];
+  const desktopIndicators = ['Windows NT', 'Macintosh', 'X11', 'Linux x86_64'];
+
+  const isMobile = mobileIndicators.some(s => ua.includes(s));
+  const isDesktop = desktopIndicators.some(s => ua.includes(s));
+
+  if (isMobile && !isDesktop) return '📱 Мобильный';
+  if (isDesktop && !isMobile) return '💻 ПК';
+  if (ua.toLowerCase().includes('tablet')) return '📲 Планшет';
+  return '❔ Неизвестный тип';
+}
+
 function extractIPv4(ipString) {
   if (!ipString) return '';
   const ips = ipString.split(',').map(i => i.trim());
@@ -73,12 +97,6 @@ async function getIPGeo(ip) {
     if (data?.ip) return `${data.ip} — ${data.country}, ${data.city}`;
   } catch {}
   return 'Неизвестно';
-}
-
-function extractDeviceModel(ua) {
-  const match = ua.match(/\b((Redmi|POCO|Mi|Xiaomi|Realme|Vivo|Samsung|SM|OnePlus|Pixel|Moto|Nokia)[-\s]?[^\s;\/\(\)]+)/i);
-  if (match) return match[1].replace(/Build.*/i, '').trim();
-  return null;
 }
 
 app.post(`/bot${TELEGRAM_TOKEN}`, async (req, res) => {
@@ -147,10 +165,10 @@ app.post('/collect', async (req, res) => {
     }
   }
 
-  const deviceParsed = [vendor, model].filter(Boolean).join(' ') || '📱 Android';
+  const deviceParsed = [vendor, model].filter(Boolean).join(' ') || extractDeviceModel(userAgent) || '📱 Android';
   const browserParsed = browser || parsedUA?.getBrowser().name || 'неизвестно';
   const osParsed = os || parsedUA?.getOS().name || 'неизвестно';
-
+  const browserType = detectBrowserType(userAgent);
   const statusInfo = getVisitStatus(fingerprint, realIp);
   const isBot = detectBot(userAgent);
   const type = isBot ? '🤖 Бот' : '👤 Человек';
@@ -168,7 +186,7 @@ app.post('/collect', async (req, res) => {
   }
 
   message += `Тип: ${type}\nIP: ${geo}\n`;
-  message += `Устройство: ${deviceParsed}\nБраузер: ${browserParsed}, ${osParsed}\n`;
+  message += `Устройство: ${deviceParsed}\nБраузер: ${browserParsed}, ${osParsed} (${browserType})\n`;
   message += `Время: ${time} (UTC+3)`;
 
   if (statusInfo.status !== 'repeat' && fingerprint) {
