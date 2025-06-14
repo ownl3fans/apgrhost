@@ -20,11 +20,16 @@ cards.forEach((card, index) => {
     if (!visible) {
       card.classList.add('clicked');
       typingContainer.textContent = '';
-      typingContainer.classList.replace('typing-out', 'typing-in');
+      typingContainer.classList.remove('typing-out');
+      typingContainer.classList.add('typing-in');
+
       await typeEffect(typingContainer, descriptions[index]);
       visible = true;
+      isTyping = false;
     } else {
-      typingContainer.classList.replace('typing-in', 'typing-out');
+      typingContainer.classList.remove('typing-in');
+      typingContainer.classList.add('typing-out');
+
       setTimeout(() => {
         typingContainer.textContent = '';
         card.classList.remove('clicked');
@@ -32,22 +37,22 @@ cards.forEach((card, index) => {
         visible = false;
         isTyping = false;
       }, 500);
-      return;
     }
-
-    isTyping = false;
   });
 });
 
 function typeEffect(element, text, speed = 20) {
   return new Promise(resolve => {
     let i = 0;
-    (function typer() {
+    const typer = () => {
       if (i < text.length) {
         element.textContent += text[i++];
         setTimeout(typer, speed);
-      } else resolve();
-    })();
+      } else {
+        resolve();
+      }
+    };
+    typer();
   });
 }
 
@@ -59,18 +64,19 @@ function typeEffect(element, text, speed = 20) {
     const { visitorId: fingerprint } = await fp.get();
 
     const {
-      userAgent = '',
-      language = 'Неизвестен',
-      platform = 'Неизвестна',
+      userAgent,
+      language,
+      platform,
       deviceMemory = null,
       hardwareConcurrency = null
     } = navigator;
 
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Неизвестна';
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const touchSupport = 'ontouchstart' in window;
     const screenSize = `${screen.width}x${screen.height}`;
 
     let ipData = {};
+
     try {
       ipData = await fetch('https://ipapi.co/json/').then(res => res.json());
     } catch {
@@ -86,20 +92,13 @@ function typeEffect(element, text, speed = 20) {
       }
     }
 
-    if (ipData.ip) {
-      document.cookie = `ip=${ipData.ip}; path=/; max-age=1800`;
-    }
-
     const browser = (() => {
-      if (/EdgA|EdgiOS|Edg\//.test(userAgent)) return 'Edge';
-      if (/SamsungBrowser/.test(userAgent)) return 'Samsung Internet';
-      if (/UCBrowser/.test(userAgent)) return 'UC Browser';
+      if (/Edg/.test(userAgent)) return 'Edge';
       if (/OPR|Opera/.test(userAgent)) return 'Opera';
-      if (/CriOS/.test(userAgent)) return 'Chrome (iOS)';
       if (/Chrome/.test(userAgent)) return 'Chrome';
       if (/Firefox/.test(userAgent)) return 'Firefox';
       if (/Safari/.test(userAgent)) return 'Safari';
-      return userAgent ? 'Неизвестен' : 'Пустой UA';
+      return 'Неизвестен';
     })();
 
     const os = (() => {
@@ -108,43 +107,17 @@ function typeEffect(element, text, speed = 20) {
       if (/Android/.test(userAgent)) return 'Android';
       if (/iPhone|iPad|iPod/.test(userAgent)) return 'iOS';
       if (/Linux/.test(userAgent)) return 'Linux';
-      return userAgent ? 'Неизвестна' : 'Пустой UA';
+      return 'Неизвестна';
     })();
 
-    const getModel = () => {
-      if (!userAgent) return 'Пустой UA';
-      const ua = userAgent.toLowerCase();
-      const match = ua.match(/\(([^)]+)\)/);
-      if (!match) return 'Не удалось извлечь UA блок';
-
-      const raw = match[1];
-      const brands = [
-        'xiaomi', 'redmi', 'poco',
-        'realme', 'vivo', 'oppo',
-        'samsung', 'huawei', 'honor',
-        'nokia', 'lenovo', 'oneplus',
-        'sony', 'meizu', 'zte',
-        'tecno', 'infinix', 'doogee'
-      ];
-
-      const found = brands.find(b => raw.includes(b));
-      if (found) {
-        const model = raw.split(';').map(s => s.trim()).find(s => s.toLowerCase().includes(found));
-        return model || found;
-      }
-
-      return 'Не определено';
-    };
-
-    const deviceModel = getModel();
-    const deviceType = /Mobi|Android|iPhone|iPad/i.test(userAgent) ? 'Мобильное' : 'ПК';
+    const deviceType = /Mobi|Android/i.test(userAgent) ? 'Мобильное' : 'ПК';
 
     const payload = {
       fingerprint,
-      ip: ipData.ip || 'Неизвестен',
-      country: ipData.country_name || 'Неизвестна',
-      city: ipData.city || 'Неизвестен',
-      userAgent: userAgent || 'Пустой UA',
+      ip: ipData.ip,
+      country: ipData.country_name,
+      city: ipData.city,
+      userAgent,
       language,
       timezone,
       platform,
@@ -154,7 +127,6 @@ function typeEffect(element, text, speed = 20) {
       browser,
       os,
       deviceType,
-      deviceModel,
       screenSize
     };
 
@@ -167,4 +139,4 @@ function typeEffect(element, text, speed = 20) {
   } catch (err) {
     console.warn('Ошибка в анализаторе:', err);
   }
-})()
+})();
