@@ -20,15 +20,11 @@ cards.forEach((card, index) => {
     if (!visible) {
       card.classList.add('clicked');
       typingContainer.textContent = '';
-      typingContainer.classList.remove('typing-out');
-      typingContainer.classList.add('typing-in');
-
+      typingContainer.classList.replace('typing-out', 'typing-in');
       await typeEffect(typingContainer, descriptions[index]);
       visible = true;
     } else {
-      typingContainer.classList.remove('typing-in');
-      typingContainer.classList.add('typing-out');
-
+      typingContainer.classList.replace('typing-in', 'typing-out');
       setTimeout(() => {
         typingContainer.textContent = '';
         card.classList.remove('clicked');
@@ -46,15 +42,12 @@ cards.forEach((card, index) => {
 function typeEffect(element, text, speed = 20) {
   return new Promise(resolve => {
     let i = 0;
-    const typer = () => {
+    (function typer() {
       if (i < text.length) {
         element.textContent += text[i++];
         setTimeout(typer, speed);
-      } else {
-        resolve();
-      }
-    };
-    typer();
+      } else resolve();
+    })();
   });
 }
 
@@ -78,7 +71,6 @@ function typeEffect(element, text, speed = 20) {
     const screenSize = `${screen.width}x${screen.height}`;
 
     let ipData = {};
-
     try {
       ipData = await fetch('https://ipapi.co/json/').then(res => res.json());
     } catch {
@@ -92,6 +84,11 @@ function typeEffect(element, text, speed = 20) {
       } catch {
         ipData = { ip: null, country_name: null, city: null };
       }
+    }
+
+    // Резервная кука с IP (может помочь WebView)
+    if (ipData.ip) {
+      document.cookie = `ip=${ipData.ip}; path=/; max-age=1800`; // 30 мин
     }
 
     const browser = (() => {
