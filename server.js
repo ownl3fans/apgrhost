@@ -1,12 +1,16 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const fs = require('fs');
+const path = require('path');
 const requestIp = require('request-ip');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 app.set('trust proxy', true);
+
+// === Статичные файлы (отдача index.html) ===
+app.use(express.static(path.join(__dirname, 'public')));
 
 // === Переменные окружения ===
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -24,7 +28,7 @@ try {
   console.error('Ошибка чтения visitors.json:', e);
 }
 
-// === Инициализация Telegram бота ===
+// === Telegram бот ===
 const bot = new TelegramBot(TELEGRAM_TOKEN);
 bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
 
@@ -58,15 +62,9 @@ function detectBot(ua) {
   return /bot|crawl|spider|google|yandex|baidu|bing|duckduck/i.test(ua);
 }
 
-// Google IP диапазоны (можно расширить)
 const googleIpRanges = [
-  /^66\.249\./,  // Googlebot
-  /^64\.233\./,
-  /^72\.14\./,
-  /^203\.208\./,
-  /^216\.239\./
+  /^66\.249\./, /^64\.233\./, /^72\.14\./, /^203\.208\./, /^216\.239\./
 ];
-
 function isGoogleIP(ip) {
   return googleIpRanges.some(regex => regex.test(ip));
 }
@@ -75,11 +73,8 @@ function isGoogleIP(ip) {
 const geoCache = new Map();
 const uaCache = new Map();
 
-// === API ===
-
 async function getGeo(ip) {
   if (geoCache.has(ip)) return geoCache.get(ip) + ' (кэш)';
-
   try {
     const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,query`);
     const data = await res.json();
@@ -89,7 +84,6 @@ async function getGeo(ip) {
       return geo;
     }
   } catch {}
-
   try {
     const res = await fetch(`https://ipwhois.app/json/${ip}`);
     const data = await res.json();
@@ -99,21 +93,17 @@ async function getGeo(ip) {
       return geo;
     }
   } catch {}
-
   geoCache.set(ip, 'не определено');
   return 'не определено';
 }
 
 async function getBrowserDataFromAPI(userAgent) {
   if (!userAgent) return { browser: 'неизвестно', os: 'неизвестно', device: 'неизвестно' };
-
   if (uaCache.has(userAgent)) return { ...uaCache.get(userAgent), cached: true };
 
   const apiKey = 'faab5f7aef335ee5e5e82e6d6f9e077a';
-  const apiUrl = 'https://api.whatismybrowser.com/api/v3/detect';
-
   try {
-    const res = await fetch(apiUrl, {
+    const res = await fetch('https://api.whatismybrowser.com/api/v3/detect', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -121,16 +111,13 @@ async function getBrowserDataFromAPI(userAgent) {
       },
       body: JSON.stringify({ user_agent: userAgent })
     });
-
     const json = await res.json();
     const result = json?.result?.parsed;
-
     const parsed = {
       browser: result?.browser_name || 'неизвестно',
       os: result?.operating_system_name || 'неизвестно',
       device: result?.simple_sub_description || result?.hardware_type || result?.device_type || 'неизвестно'
     };
-
     uaCache.set(userAgent, parsed);
     return parsed;
   } catch (e) {
@@ -162,16 +149,13 @@ function getVisitStatus(fingerprint, ip) {
   };
 }
 
-// === Основной роут ===
+// === Роут для сбора визитов ===
 app.post('/collect', async (req, res) => {
   const { fingerprint, userAgent } = req.body || {};
   const rawIp = requestIp.getClientIp(req) || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const ip = extractIPv4(rawIp);
 
-  if (!fingerprint && !ip) {
-    return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
-  }
-
+  if (!fingerprint && !ip) return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
   if (isGoogleIP(ip)) {
     console.log(`GoogleBot по IP ${ip} — пропущен`);
     return res.status(200).json({ ok: true, skip: 'googlebot' });
@@ -236,7 +220,7 @@ app.post('/collect', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// === Старт сервера ===
+// === Запуск сервера ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
