@@ -8,8 +8,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const app = express();
 app.use(express.json());
 app.set('trust proxy', true);
-
-// === Статичные файлы (отдача index.html) ===
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === Переменные окружения ===
@@ -17,18 +15,7 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
 const DOMAIN = process.env.DOMAIN || 'https://example.com';
 
-// === Работа с файлами ===
-const VISITORS_FILE = './visitors.json';
-let visitors = {};
-try {
-  if (fs.existsSync(VISITORS_FILE)) {
-    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
-  }
-} catch (e) {
-  console.error('Ошибка чтения visitors.json:', e);
-}
-
-// === Telegram бот ===
+// === Telegram Bot ===
 const bot = new TelegramBot(TELEGRAM_TOKEN);
 bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
 
@@ -42,34 +29,40 @@ bot.onText(/\/start/, msg => {
 });
 
 bot.onText(/\/stats/, msg => {
-  const keys = Object.keys(visitors);
-  bot.sendMessage(msg.chat.id, `👀 Всего визитов: ${keys.length}`);
+  const count = Object.keys(visitors).length;
+  bot.sendMessage(msg.chat.id, `👀 Всего визитов: ${count}`);
 });
 
-app.get('/ping-bot', (req, res) => res.status(200).send('OK'));
+app.get('/ping-bot', (req, res) => res.sendStatus(200));
+
+// === Хранилище визитов ===
+const VISITORS_FILE = './visitors.json';
+let visitors = {};
+try {
+  if (fs.existsSync(VISITORS_FILE)) {
+    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+  }
+} catch (err) {
+  console.error('Ошибка чтения visitors.json:', err);
+}
 
 // === Утилиты ===
-
 function extractIPv4(ip) {
   if (!ip) return '';
-  const parts = ip.split(',');
-  const first = parts[0].trim();
+  const first = (ip.split(',')[0] || '').trim();
   return first.includes(':') ? first.split(':').pop() : first;
 }
 
 function detectBot(ua) {
   if (!ua) return true;
-  return /bot|crawl|spider|google|yandex|baidu|bing|duckduck/i.test(ua);
+  return /bot|crawl|spider|google|yandex|baidu|bing|duckduck/i.test(ua.toLowerCase());
 }
 
-const googleIpRanges = [
-  /^66\.249\./, /^64\.233\./, /^72\.14\./, /^203\.208\./, /^216\.239\./
-];
+const googleIpRanges = [/^66\.249\./, /^64\.233\./, /^72\.14\./, /^203\.208\./, /^216\.239\./];
 function isGoogleIP(ip) {
-  return googleIpRanges.some(regex => regex.test(ip));
+  return googleIpRanges.some(rx => rx.test(ip));
 }
 
-// === Кэш ===
 const geoCache = new Map();
 const uaCache = new Map();
 
@@ -79,7 +72,7 @@ async function getGeo(ip) {
     const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,query`);
     const data = await res.json();
     if (data.status === 'success') {
-      const geo = `${data.country}, ${data.city}`;
+      const geo = `${data.query} (${data.country}, ${data.city})`;
       geoCache.set(ip, geo);
       return geo;
     }
@@ -88,13 +81,13 @@ async function getGeo(ip) {
     const res = await fetch(`https://ipwhois.app/json/${ip}`);
     const data = await res.json();
     if (data.success !== false) {
-      const geo = `${data.country}, ${data.city}`;
+      const geo = `${data.ip} (${data.country}, ${data.city})`;
       geoCache.set(ip, geo);
       return geo;
     }
   } catch {}
-  geoCache.set(ip, 'не определено');
-  return 'не определено';
+  geoCache.set(ip, `${ip} (не определено)`);
+  return `${ip} (не определено)`;
 }
 
 async function getBrowserDataFromAPI(userAgent) {
@@ -113,15 +106,19 @@ async function getBrowserDataFromAPI(userAgent) {
     });
     const json = await res.json();
     const result = json?.result?.parsed;
+
+    const browser = result?.browser_name || 'неизвестно';
+    const os = result?.operating_system_name || 'неизвестно';
+
     const parsed = {
-      browser: result?.browser_name || 'неизвестно',
-      os: result?.operating_system_name || 'неизвестно',
-      device: result?.simple_sub_description || result?.hardware_type || result?.device_type || 'неизвестно'
+      browser: browser,
+      os: os,
+      device: result?.simple_sub_description || result?.hardware_type || 'неизвестно'
     };
     uaCache.set(userAgent, parsed);
     return parsed;
-  } catch (e) {
-    console.error('Ошибка API WhatIsMyBrowser:', e);
+  } catch (err) {
+    console.error('Ошибка парсинга UA API:', err);
     return { browser: 'неизвестно', os: 'неизвестно', device: 'неизвестно' };
   }
 }
@@ -136,7 +133,7 @@ function getVisitStatus(fingerprint, ip) {
   const diff = (now - last) / 1000;
 
   const sameIP = entry.ip === ip;
-  const score = fingerprint ? (sameIP ? 100 : 60) : 50;
+  const score = fingerprint ? (sameIP ? 100 : 70) : 50;
   const reason = fingerprint
     ? (sameIP ? 'Fingerprint + IP' : 'Fingerprint совпал')
     : 'Только IP';
@@ -149,57 +146,66 @@ function getVisitStatus(fingerprint, ip) {
   };
 }
 
-// === Роут для сбора визитов ===
+// === Обработка визита ===
 app.post('/collect', async (req, res) => {
   const { fingerprint, userAgent } = req.body || {};
   const rawIp = requestIp.getClientIp(req) || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const ip = extractIPv4(rawIp);
 
-  if (!fingerprint && !ip) return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
-  if (isGoogleIP(ip)) {
-    console.log(`GoogleBot по IP ${ip} — пропущен`);
-    return res.status(200).json({ ok: true, skip: 'googlebot' });
-  }
+  if (!ip && !fingerprint) return res.sendStatus(400);
 
-  const uaResult = await getBrowserDataFromAPI(userAgent);
+  if (isGoogleIP(ip)) return res.sendStatus(200);
+
+  const lowerUA = (userAgent || '').toLowerCase();
+  const isCrawler = [
+    'googlebot', 'bingbot', 'yandexbot', 'duckduckbot',
+    'baiduspider', 'slurp', 'facebot', 'twitterbot', 'linkedinbot'
+  ].some(bot => lowerUA.includes(bot));
+
+  if (isCrawler) return res.sendStatus(200);
+
   const geo = await getGeo(ip);
-  const status = getVisitStatus(fingerprint, ip);
+  const uaResult = await getBrowserDataFromAPI(userAgent);
+  const visit = getVisitStatus(fingerprint, ip);
+
   const isBot = detectBot(userAgent);
   const type = isBot ? '🤖 Бот' : '👤 Человек';
-  const time = new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ru-RU');
+  const timeStr = now.toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' });
 
   let msg = '';
-  if (status.status === 'new') {
+
+  if (visit.status === 'new') {
     msg += '🆕 НОВЫЙ ЗАХОД\n';
-  } else if (status.status === 'repeat') {
-    msg += `♻️ ПОВТОРНЫЙ ЗАХОД\nШанс: ${status.score}% (${status.reason})\n`;
-    msg += `Последний визит: ${new Date(status.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n`;
+  } else if (visit.status === 'repeat') {
+    msg += `♻️ ПОВТОРНЫЙ ЗАХОД\nШанс: ${visit.score}% (${visit.reason})\n`;
+    msg += `Последний визит: ${new Date(visit.lastSeen).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n`;
   } else {
-    msg += `❔ НЕИЗВЕСТНЫЙ ЗАХОД\nПричина: ${status.reason || 'не определено'}\n`;
+    msg += `❔ НЕИЗВЕСТНЫЙ ЗАХОД\nПричина: ${visit.reason || 'не определено'}\n`;
   }
 
-  msg += `Тип: ${type}\nIP: ${geo}\n`;
+  msg += `Тип: ${type}\n`;
+  msg += `IP: ${geo}\n`;
 
   msg += uaResult.device !== 'неизвестно'
     ? `Устройство: ${uaResult.device}\n`
     : `Устройство: не определено (User-Agent: ${userAgent || 'пустой'})\n`;
 
-  msg += uaResult.browser !== 'неизвестно'
-    ? `Браузер: ${uaResult.browser}\n`
+  const browserLine = `${uaResult.browser}, ${uaResult.os}`;
+  msg += browserLine !== 'неизвестно, неизвестно'
+    ? `Браузер: ${browserLine}\n`
     : `Браузер: не определён (User-Agent: ${userAgent || 'пустой'})\n`;
 
-  msg += uaResult.os !== 'неизвестно'
-    ? `ОС: ${uaResult.os}\n`
-    : `ОС: не определена (User-Agent: ${userAgent || 'пустой'})\n`;
-
-  msg += `Fingerprint: ${fingerprint || 'нет'}\nВремя: ${time} (UTC+3)`;
+  msg += `Fingerprint: ${fingerprint || 'нет'}\n`;
+  msg += `Время: ${timeStr} (UTC+3)`;
   if (uaResult.cached) msg += `\n🗂 Данные из кэша`;
 
   for (const id of CHAT_IDS) {
     try {
       await bot.sendMessage(id, msg);
     } catch (err) {
-      console.error('Ошибка Telegram:', err);
+      console.error('Ошибка отправки в Telegram:', err);
     }
   }
 
@@ -213,11 +219,11 @@ app.post('/collect', async (req, res) => {
 
   try {
     fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
-  } catch (e) {
-    console.error('Ошибка записи файла:', e);
+  } catch (err) {
+    console.error('Ошибка записи visitors.json:', err);
   }
 
-  res.status(200).json({ ok: true });
+  res.sendStatus(200);
 });
 
 // === Запуск сервера ===
