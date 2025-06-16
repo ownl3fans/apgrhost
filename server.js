@@ -1,229 +1,295 @@
 const express = require('express');
-const fs = require('fs');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
+const requestIp = require('request-ip');
 const TelegramBot = require('node-telegram-bot-api');
-const UAParser = require('ua-parser-js');
-const { DateTime } = require('luxon');
+
 const app = express();
 app.use(express.json());
+app.set('trust proxy', true);
 
-const TOKEN = process.env.TELEGRAM_TOKEN;
-const CHAT_IDS = process.env.CHAT_IDS?.split(',') || [];
-const DOMAIN = process.env.DOMAIN || 'unknown-domain';
-const bot = new TelegramBot(TOKEN);
+app.use(express.static(path.join(__dirname, 'public')));
+
+// === Переменные окружения ===
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const CHAT_IDS = (process.env.CHAT_IDS || '').split(',').map(id => id.trim());
+const DOMAIN = process.env.DOMAIN || 'https://example.com';
+
+// === Работа с файлами ===
+const VISITORS_FILE = './visitors.json';
+let visitors = {};
+try {
+  if (fs.existsSync(VISITORS_FILE)) {
+    visitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+  }
+} catch (e) {
+  console.error('Ошибка чтения visitors.json:', e);
+}
+
+// === Telegram бот ===
+const bot = new TelegramBot(TELEGRAM_TOKEN);
+bot.setWebHook(`${DOMAIN}/bot${TELEGRAM_TOKEN}`);
+
+app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+bot.onText(/\/start/, msg => {
+  bot.sendMessage(msg.chat.id, 'Бот работает и принимает события с сайта.');
+});
+
+bot.onText(/\/stats/, msg => {
+  const keys = Object.keys(visitors);
+  bot.sendMessage(msg.chat.id, `👀 Всего визитов: ${keys.length}`);
+});
+
+app.get('/ping-bot', (req, res) => res.status(200).send('OK'));
+
+// === Утилиты ===
+
+function extractIPv4(ip) {
+  if (!ip) return '';
+  // x-forwarded-for может быть списком IP через запятую
+  const parts = ip.split(',');
+  const first = parts[0].trim();
+  // Если IP в формате IPv6 с IPv4, например ::ffff:192.168.1.1
+  return first.includes(':') && first.includes('.') ? first.split(':').pop() : first;
+}
+
+function detectBot(ua) {
+  if (!ua) return true;
+  return /bot|crawl|spider|google|yandex|baidu|bing|duckduck/i.test(ua);
+}
+
+const googleIpRanges = [
+  /^66\.249\./, /^64\.233\./, /^72\.14\./, /^203\.208\./, /^216\.239\./
+];
+function isGoogleIP(ip) {
+  return googleIpRanges.some(regex => regex.test(ip));
+}
+
+// === Кэш ===
+const geoCache = new Map();
 const uaCache = new Map();
 
-const visitorsFile = './visitors.json';
-if (!fs.existsSync(visitorsFile)) fs.writeFileSync(visitorsFile, '[]');
-
-const readVisitors = () => JSON.parse(fs.readFileSync(visitorsFile));
-const writeVisitors = (data) => fs.writeFileSync(visitorsFile, JSON.stringify(data, null, 2));
-
-const isBot = (ua) => {
-  const botPatterns = [/bot/i, /crawler/i, /spider/i, /crawling/i, /preview/i, /Googlebot/i];
-  return botPatterns.some((pattern) => pattern.test(ua));
-};
+async function getGeo(ip) {
+  if (geoCache.has(ip)) return geoCache.get(ip) + ' (кэш)';
+  try {
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,query`);
+    const data = await res.json();
+    if (data.status === 'success') {
+      const geo = `${data.country}, ${data.city}`;
+      geoCache.set(ip, geo);
+      return geo;
+    }
+  } catch {}
+  try {
+    const res = await fetch(`https://ipwhois.app/json/${ip}`);
+    const data = await res.json();
+    if (data.success !== false) {
+      const geo = `${data.country}, ${data.city}`;
+      geoCache.set(ip, geo);
+      return geo;
+    }
+  } catch {}
+  geoCache.set(ip, 'не определено');
+  return 'не определено';
+}
 
 async function getBrowserDataFromAPI(userAgent) {
-  if (!userAgent) return { browser: 'не определён', os: 'не определена', device: 'не определено', reason: 'Пустой User-Agent' };
+  if (!userAgent) return { browser: 'неизвестно', os: 'неизвестно', device: 'неизвестно' };
   if (uaCache.has(userAgent)) return { ...uaCache.get(userAgent), cached: true };
 
-  const apiKey = 'faab5f7aef335ee5e5e82e6d6f9e077a';
-  let parsed = {};
+  const apiKey = 'faab5f7aef335ee5e582e6d6f9e077a';
   try {
     const res = await fetch('https://api.whatismybrowser.com/api/v3/detect', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-KEY': apiKey,
+        'X-API-KEY': apiKey
       },
       body: JSON.stringify({ user_agent: userAgent })
     });
-
     const json = await res.json();
-    const r = json?.result?.parsed;
-    const browser = r?.browser_name || r?.software_sub_type;
-    const os = r?.operating_system_name || r?.operating_platform;
-    const device = r?.hardware_model || r?.hardware_type || r?.simple_sub_description;
-
-    if (browser && os && device) {
-      parsed = { browser, os, device };
-    } else {
-      throw new Error('API incomplete');
-    }
-  } catch {
-    const parser = new UAParser(userAgent);
-    const browser = parser.getBrowser().name || 'не определён';
-    const os = parser.getOS().name || 'не определена';
-    let device = parser.getDevice().model || parser.getDevice().vendor || parser.getDevice().type;
-
-    if (!device) {
-      device = /android|ios/i.test(os) ? 'Мобильное устройство' :
-               /windows|mac|linux/i.test(os) ? 'ПК' : 'не определено';
-    }
-
-    parsed = {
-      browser,
-      os,
-      device,
-      reason: 'Fallback через UAParser.js',
+    const result = json?.result?.parsed;
+    const parsed = {
+      browser: result?.browser_name || 'неизвестно',
+      os: result?.operating_system_name || 'неизвестно',
+      device: result?.simple_sub_description || result?.hardware_type || result?.device_type || 'неизвестно'
     };
+    uaCache.set(userAgent, parsed);
+    return parsed;
+  } catch (e) {
+    console.error('Ошибка API WhatIsMyBrowser:', e);
+    return { browser: 'неизвестно', os: 'неизвестно', device: 'неизвестно' };
   }
-
-  uaCache.set(userAgent, parsed);
-  return parsed;
 }
 
-function getLocationFromIPData(data) {
-  if (!data || data.status === 'fail') return { country: 'не определена', city: 'не определён' };
+// Проверка на VPN/Proxy по параметрам
+function checkVPNProxy({ ipRegion, timezone, lang, clientTime, serverTime, touchSupported, userAgentDevice }) {
+  let score = 0;
+  const reasons = [];
+
+  // 1. Несовпадение часового пояса и региона IP
+  if (ipRegion && timezone && !timezone.includes(ipRegion.split(',')[0])) {
+    score += 4;
+    reasons.push(`Часовой пояс (${timezone}) не совпадает с регионом IP (${ipRegion})`);
+  }
+
+  // 2. Разница времени больше 60 минут
+  if (clientTime && serverTime && Math.abs(clientTime - serverTime) > 60 * 60 * 1000) {
+    score += 3;
+    reasons.push('Время клиента сильно отличается от времени сервера');
+  }
+
+  // 3. Язык не совпадает с регионом IP
+  if (ipRegion && lang && !lang.toLowerCase().includes(ipRegion.split(',')[0].toLowerCase())) {
+    score += 2;
+    reasons.push(`Язык (${lang}) не соответствует региону IP (${ipRegion})`);
+  }
+
+  // 4. Нет поддержки touch, но устройство мобильное
+  if (userAgentDevice && /mobile|phone|tablet|android|iphone/i.test(userAgentDevice) && !touchSupported) {
+    score += 1;
+    reasons.push('Устройство мобильное, но touch-события не поддерживаются');
+  }
+
+  return { score, reasons };
+}
+
+function getVisitStatus(fingerprint, ip) {
+  const id = fingerprint || `ip_${ip}`;
+  const entry = visitors[id];
+  if (!entry) return { status: 'new' };
+
+  const now = Date.now();
+  const last = new Date(entry.time).getTime();
+  const diff = (now - last) / 1000;
+
+  const sameIP = entry.ip === ip;
+  const score = fingerprint ? (sameIP ? 100 : 60) : 50;
+  const reason = fingerprint
+    ? (sameIP ? 'Fingerprint + IP' : 'Fingerprint совпал')
+    : 'Только IP';
+
   return {
-    country: data.country || data.country_name || 'не определена',
-    city: data.city || 'не определён'
+    status: 'repeat',
+    score,
+    reason,
+    lastSeen: entry.time
   };
 }
 
-async function getIPInfo(ip) {
-  try {
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city`);
-    const data = await res.json();
-    if (data.status === 'success') return data;
-    throw new Error('Primary IP API failed');
-  } catch {
-    const res = await fetch(`https://ipwhois.app/json/${ip}`);
-    return await res.json();
-  }
-}
-
-function findMatch(prev, fingerprint, ip) {
-  const matches = prev.filter(v =>
-    (fingerprint && v.fingerprint === fingerprint) || v.ip === ip
-  );
-
-  if (!matches.length) return null;
-
-  const last = matches[matches.length - 1];
-  const byFP = fingerprint && last.fingerprint === fingerprint;
-  const byIP = last.ip === ip;
-  const chance = byFP && byIP ? 100 : byFP || byIP ? 60 : 0;
-
-  return {
-    date: last.date,
-    chance,
-    byFP,
-    byIP
-  };
-}
-
-function formatTime(dateStr) {
-  return DateTime.fromISO(dateStr).setZone('Europe/Moscow').toFormat('HH:mm:ss');
-}
-
-function formatReport(type, data) {
-  const lines = [];
-  lines.push(type === 'repeat' ? '🔁 ПОВТОРНЫЙ ЗАХОД' :
-             type === 'unknown' ? '❓ НЕИЗВЕСТНЫЙ ЗАХОД' :
-             '🆕 НОВЫЙ ЗАХОД');
-  lines.push(`Тип: ${data.isBot ? '🤖 Бот' : '👤 Человек'}`);
-  lines.push(`IP: ${data.ip} (${data.country}, ${data.city})`);
-
-  if (data.device) {
-    lines.push(`Устройство: ${data.device}${data.deviceReason ? ` (Причина: ${data.deviceReason})` : ''}`);
-  }
-  if (data.browser) {
-    lines.push(`Браузер: ${data.browser}${data.browserReason ? ` (Причина: ${data.browserReason})` : ''}`);
-  }
-
-  if (type === 'repeat') {
-    if (data.fingerprint) {
-      lines.push(`Fingerprint: ${data.fingerprint}`);
-    }
-    lines.push(`Шанс совпадения: ${data.chance}% (по ${data.byFP ? 'Fingerprint' : ''}${data.byFP && data.byIP ? ' + ' : ''}${data.byIP ? 'IP' : ''})`);
-    lines.push(`Предыдущий визит: ${formatTime(data.prevDate)} (UTC+3)`);
-  }
-
-  lines.push(`Время: ${formatTime(data.date)} (UTC+3)`);
-  return lines.join('\n');
-}
-
+// === Роут для сбора визитов ===
 app.post('/collect', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress || req.ip;
-  const userAgent = req.body.userAgent || req.headers['user-agent'] || '';
-  const fingerprint = req.body.fingerprint || null;
-
-  if (isBot(userAgent)) return res.sendStatus(204);
-
-  const ipData = await getIPInfo(ip);
-  const { country, city } = getLocationFromIPData(ipData);
-  const uaData = await getBrowserDataFromAPI(userAgent);
-
-  const all = readVisitors();
-  const now = new Date().toISOString();
-
-  const match = findMatch(all, fingerprint, ip);
-  const type = match ? 'repeat' : fingerprint ? 'new' : 'unknown';
-
-  // Только для повторных сохраняем fingerprint
-  const visitor = {
-    ip,
+  const {
+    fingerprint,
     userAgent,
-    date: now,
-    country,
-    city
-  };
-  if (match && fingerprint) visitor.fingerprint = fingerprint;
+    screenWidth,
+    screenHeight,
+    timezone,
+    language,
+    clientTime, // timestamp клиента в ms
+    touchSupported,
+  } = req.body || {};
 
-  all.push(visitor);
-  writeVisitors(all);
+  // Получаем IP клиента корректно
+  const rawIp = requestIp.getClientIp(req) || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ip = extractIPv4(rawIp);
 
-  const msgData = {
-    ip,
-    country,
-    city,
-    fingerprint: match ? fingerprint : undefined,
-    date: now,
-    device: uaData.device !== 'не определено' ? uaData.device : undefined,
-    deviceReason: uaData.device === 'не определено' ? uaData.reason : undefined,
-    browser: uaData.browser !== 'не определён' ? uaData.browser : undefined,
-    browserReason: uaData.browser === 'не определён' ? uaData.reason : undefined,
-    isBot: false,
-    chance: match?.chance || null,
-    byFP: match?.byFP || false,
-    byIP: match?.byIP || false,
-    prevDate: match?.date || null
-  };
-
-  const text = formatReport(type, msgData);
-  for (const id of CHAT_IDS) {
-    await bot.sendMessage(id, text);
+  if (!fingerprint && !ip) return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
+  if (isGoogleIP(ip)) {
+    // Пропускаем GoogleBot
+    return res.status(200).json({ ok: true, skip: 'googlebot' });
   }
 
-  res.sendStatus(200);
+  // Определяем браузер/устройство через API
+  const uaResult = await getBrowserDataFromAPI(userAgent);
+
+  // Получаем гео по IP
+  const geoRaw = await getGeo(ip);
+  // Для упрощения региона возьмём страну из geoRaw, например "Russia, Moscow" → "Russia"
+  const ipRegion = geoRaw.split(',')[0] || '';
+
+  // Проверяем тип визита (новый/повторный)
+  const status = getVisitStatus(fingerprint, ip);
+
+  // Определяем бота по User-Agent
+  const isBot = detectBot(userAgent);
+  const type = isBot ? '🤖 Бот' : '👤 Человек';
+
+  // Текущие времена
+  const serverTime = Date.now();
+  const clientTimeNum = clientTime ? Number(clientTime) : null;
+
+  // Проверка VPN/Proxy
+  const vpnCheck = checkVPNProxy({
+    ipRegion,
+    timezone,
+    lang: language,
+    clientTime: clientTimeNum,
+    serverTime,
+    touchSupported: !!touchSupported,
+    userAgentDevice: uaResult.device
+  });
+
+  // Формируем сообщение
+  let msg = '';
+
+  if (status.status === 'new') {
+    msg += '🆕 НОВЫЙ ЗАХОД\n';
+  } else if (status.status === 'repeat') {
+    msg += `♻️ ПОВТОРНЫЙ ЗАХОД\nШанс совпадения: ${status.score}% (${status.reason})\n`;
+    msg += `Последний визит: ${new Date(status.lastSeen).toLocaleString('ru-RU', { timeZone: timezone || 'UTC' })}\n`;
+  } else {
+    msg += '❓ НЕИЗВЕСТНЫЙ ЗАХОД\n';
+  }
+
+  msg += `Тип: ${type}\n`;
+  msg += `IP: ${ip} (${geoRaw})\n`;
+  msg += `Устройство: ${uaResult.device || 'неизвестно'}\n`;
+  msg += `ОС: ${uaResult.os || 'неизвестно'}\n`;
+  msg += `Браузер: ${uaResult.browser || 'неизвестно'}\n`;
+  if (!userAgent) msg += 'Причина: пустой User-Agent\n';
+  if (isBot) msg += 'Причина: детектирован как бот по User-Agent\n';
+
+  if (vpnCheck.score >= 5) {
+    msg += `⚠️ Возможен VPN/Proxy (оценка ${vpnCheck.score}):\n• ${vpnCheck.reasons.join('\n• ')}\n`;
+  }
+
+  // Записываем визит
+  const visitId = fingerprint || `ip_${ip}`;
+  visitors[visitId] = {
+    fingerprint,
+    ip,
+    time: new Date().toISOString(),
+    userAgent,
+    geo: geoRaw,
+    uaParsed: uaResult,
+  };
+
+  try {
+    fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
+  } catch (e) {
+    console.error('Ошибка записи visitors.json:', e);
+  }
+
+  // Отправляем в Telegram
+  for (const chatId of CHAT_IDS) {
+    try {
+      await bot.sendMessage(chatId, msg);
+    } catch (e) {
+      console.error('Ошибка отправки сообщения в Telegram:', e);
+    }
+  }
+
+  res.json({ ok: true });
 });
 
-bot.setWebHook(`${DOMAIN}/bot${TOKEN}`);
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-bot.onText(/^\/start$/, (msg) => {
-  bot.sendMessage(msg.chat.id, `Бот активен. Используй /stats и /last`);
-});
-
-bot.onText(/^\/stats$/, (msg) => {
-  const all = readVisitors();
-  bot.sendMessage(msg.chat.id, `Всего визитов: ${all.length}`);
-});
-
-bot.onText(/^\/last$/, (msg) => {
-  const all = readVisitors();
-  if (!all.length) return bot.sendMessage(msg.chat.id, `Нет визитов`);
-  const last = all[all.length - 1];
-  const text = `Последний визит:\nIP: ${last.ip}\nВремя: ${formatTime(last.date)} (UTC+3)`;
-  bot.sendMessage(msg.chat.id, text);
-});
-
-app.get('/ping-bot', (_, res) => res.send('Bot is running'));
-
+// === Запуск сервера ===
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Сервер запущен на порту ${PORT}`);
+});
