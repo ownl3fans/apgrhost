@@ -41,6 +41,15 @@ function ipv6to4(ip) {
     return ip;
 }
 
+// Извлечение IPv4 из строки (x-forwarded-for, ::ffff:...)
+function extractIPv4(rawIp) {
+    if (!rawIp) return '';
+    const ip = rawIp.split(',')[0].trim();
+    const match = ip.match(/::ffff:(\d+\.\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+    return ip;
+}
+
 // Simple bot detection
 function isBot(ua) {
     if (!ua) return false;
@@ -151,4 +160,7 @@ async function analyzeVisitor({ ip, headers }) {
     };
 }
 
-module.exports = analyzeVisitor;
+module.exports = {
+    analyzeVisitor,
+    extractIPv4
+};
