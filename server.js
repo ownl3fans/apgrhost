@@ -64,7 +64,7 @@ app.post('/collect', async (req, res) => {
   const type = isBot ? '🤖 Бот' : '👤 Человек';
 
   // Парсинг устройства
-  const uaData = parseDevice.parseDevice(userAgent || '');
+  const uaData = parseDevice(userAgent || '');
   const geoData = await visitorInfo.getGeo(ip);
   const geoNote = geoData.cached ? '⚠️ Данные IP взяты из кэша' : '';
   const geoStr = geoData.location || 'неизвестно';
