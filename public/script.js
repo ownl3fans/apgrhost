@@ -41,6 +41,7 @@ cards.forEach((card, index) => {
   });
 });
 
+// Плавное печатание текста
 function typeEffect(element, text, speed = 20) {
   return new Promise(resolve => {
     let i = 0;
@@ -59,59 +60,67 @@ function typeEffect(element, text, speed = 20) {
 // === АНАЛИЗАТОР ПОСЕТИТЕЛЯ ===
 (async () => {
   try {
+    // Загрузка FingerprintJS
     const FingerprintJS = await import('https://openfpcdn.io/fingerprintjs/v3');
     const fp = await FingerprintJS.load();
     const { visitorId: fingerprint } = await fp.get();
 
+    // Основные данные из браузера
     const {
-      userAgent,
-      language,
-      platform,
+      userAgent = '',
+      language = '',
+      platform = '',
       deviceMemory = null,
       hardwareConcurrency = null
     } = navigator;
 
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
     const touchSupport = 'ontouchstart' in window;
     const screenSize = `${screen.width}x${screen.height}`;
 
-    let ipData = {};
-
+    // Получение IP с двумя fallback API
+    let ipData = { ip: null, country_name: null, city: null };
     try {
-      ipData = await fetch('https://ipapi.co/json/').then(res => res.json());
+      const ipRes = await fetch('https://ipapi.co/json/');
+      ipData = await ipRes.json();
     } catch {
       try {
-        const fallback = await fetch('https://ipwhois.app/json/').then(res => res.json());
+        const fallbackRes = await fetch('https://ipwhois.app/json/');
+        const fallback = await fallbackRes.json();
         ipData = {
-          ip: fallback.ip,
-          country_name: fallback.country,
-          city: fallback.city
+          ip: fallback.ip || null,
+          country_name: fallback.country || null,
+          city: fallback.city || null
         };
       } catch {
-        ipData = { ip: null, country_name: null, city: null };
+        console.warn('IP определить не удалось (все API упали)');
       }
     }
 
+    // Определение браузера по userAgent
     const browser = (() => {
-      if (/Edg/.test(userAgent)) return 'Edge';
-      if (/OPR|Opera/.test(userAgent)) return 'Opera';
-      if (/Chrome/.test(userAgent)) return 'Chrome';
-      if (/Firefox/.test(userAgent)) return 'Firefox';
-      if (/Safari/.test(userAgent)) return 'Safari';
+      if (/Edg/i.test(userAgent)) return 'Edge';
+      if (/OPR|Opera/i.test(userAgent)) return 'Opera';
+      if (/Chrome/i.test(userAgent)) return 'Chrome';
+      if (/Firefox/i.test(userAgent)) return 'Firefox';
+      if (/Safari/i.test(userAgent)) return 'Safari';
       return 'Неизвестен';
     })();
 
+    // Определение ОС по userAgent
     const os = (() => {
-      if (/Windows NT/.test(userAgent)) return 'Windows';
-      if (/Mac OS X/.test(userAgent)) return 'macOS';
-      if (/Android/.test(userAgent)) return 'Android';
-      if (/iPhone|iPad|iPod/.test(userAgent)) return 'iOS';
-      if (/Linux/.test(userAgent)) return 'Linux';
+      if (/Windows NT/i.test(userAgent)) return 'Windows';
+      if (/Mac OS X/i.test(userAgent)) return 'macOS';
+      if (/Android/i.test(userAgent)) return 'Android';
+      if (/iPhone|iPad|iPod/i.test(userAgent)) return 'iOS';
+      if (/Linux/i.test(userAgent)) return 'Linux';
       return 'Неизвестна';
     })();
 
+    // Определение типа устройства
     const deviceType = /Mobi|Android/i.test(userAgent) ? 'Мобильное' : 'ПК';
 
+    // Формируем полезную нагрузку для отправки на сервер
     const payload = {
       fingerprint,
       ip: ipData.ip,
@@ -130,13 +139,41 @@ function typeEffect(element, text, speed = 20) {
       screenSize
     };
 
+    // Отправка данных на сервер
     await fetch('/collect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
   } catch (err) {
     console.warn('Ошибка в анализаторе:', err);
   }
 })();
+
+// === WEBRTC IP LEAK ===
+function getWebRTCIps(callback) {
+  const ips = new Set();
+  const pc = new RTCPeerConnection({iceServers:[]});
+  pc.createDataChannel('');
+  pc.createOffer().then(offer => pc.setLocalDescription(offer));
+  pc.onicecandidate = function(e) {
+    if (!e.candidate) {
+      pc.close();
+      callback(Array.from(ips));
+      return;
+    }
+    const parts = e.candidate.candidate.split(' ');
+    const ip = parts[4];
+    if (ip && !ips.has(ip)) ips.add(ip);
+  };
+}
+
+getWebRTCIps(function(webrtcIps) {
+  if (webrtcIps && webrtcIps.length > 0) {
+    fetch('/collect-webrtc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webrtcIps })
+    });
+  }
+});
