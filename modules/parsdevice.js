@@ -1,4 +1,5 @@
-const XIAOMI_MODELS = {
+const DEVICE_MODELS = {
+ xiaomi: {
   "2200133G": "Redmi Note 13",
   "2200133TG": "Redmi Note 13 Pro",
   "M2101K6G": "Xiaomi Redmi Note 10 Pro",
@@ -134,9 +135,9 @@ const XIAOMI_MODELS = {
   "M2101K6RTP": "Xiaomi Mi Pad 7",
   "M2107K20CTP": "Xiaomi Mi Pad 7 Pro",
   "M2104K10ACTP": "Xiaomi Mi Pad 7 Ultra"
-};
+},
 
-const SAMSUNG_MODELS = {
+samsung: {
   "SM-G960F": "Samsung Galaxy S9",
   "SM-G965F": "Samsung Galaxy S9+",
   "SM-G970F": "Samsung Galaxy S10e",
@@ -256,10 +257,16 @@ const SAMSUNG_MODELS = {
   "SM-T720": "Samsung Galaxy Tab S5e",
   "SM-T725": "Samsung Galaxy Tab S7+",
   "SM-T970": "Samsung Galaxy Tab S7",
+  "SM-T976B": "Samsung Galaxy Tab S7 FE 5G",
+  "SM-T510": "Samsung Galaxy Tab A7 10.4",
+  "SM-T515": "Samsung Galaxy Tab A7 10.4 2020",
+  "SM-T720": "Samsung Galaxy Tab S5e",
+  "SM-T725": "Samsung Galaxy Tab S7+",
+  "SM-T970": "Samsung Galaxy Tab S7",
   "SM-T976B": "Samsung Galaxy Tab S7 FE 5G"
-};
+},
 
-const HUAWEI_MODELS = {
+huawei: {
   "LYA-L29": "Huawei P30 Pro",
   "ELE-L29": "Huawei P20 Pro",
   "ELS-NX9": "Huawei P40 Pro",
@@ -317,9 +324,9 @@ const HUAWEI_MODELS = {
   "BG2-W19": "Huawei MatePad Pro 5G",
   "BAH3-L09": "Huawei MatePad T 8",
   "AGS3-L09": "Huawei MatePad 11 WiFi"
-};
+},
 
-const TECNO_MODELS = {
+tecno: {
   "KE5j": "Tecno Spark 5",
   "KE5g": "Tecno Spark 5 Air",
   "KE6j": "Tecno Spark 6",
@@ -378,9 +385,9 @@ const TECNO_MODELS = {
   "TB10K": "Tecno Tablet TB10K",
   "TB8N": "Tecno Tablet TB8N",
   "TB10N": "Tecno Tablet TB10N"
-};
+},
 
-const INFINIX_MODELS = {
+infinix: {
   "X650C": "Infinix Hot 12",
   "X657B": "Infinix Hot 12 Play",
   "X682B": "Infinix Hot 12i",
@@ -438,9 +445,9 @@ const INFINIX_MODELS = {
   "X681TAB": "Infinix Tablet 10 Pro",
   "X721TAB": "Infinix Tablet 12 Pro",
   "X731TAB": "Infinix Tablet 13 Pro"
-};
+},
 
-const VIVO_MODELS = {
+vivo: {
   "V2031": "Vivo V21 5G",
   "V2040": "Vivo V21e",
   "V2046": "Vivo V21e 5G",
@@ -500,9 +507,9 @@ const VIVO_MODELS = {
   "V7171": "Vivo Pad 12",
   "V7181": "Vivo Pad 13",
   "V7191": "Vivo Pad 14"
-};
+},
 
-const ONEPLUS_MODELS = {
+oneplus: {
   "LE2115": "OnePlus 9",
   "LE2117": "OnePlus 9 Pro",
   "LE2123": "OnePlus 9R",
@@ -562,9 +569,9 @@ const ONEPLUS_MODELS = {
   "ONEPAD8": "OnePlus Pad Neo",
   "ONEPAD9": "OnePlus Pad S",
   "ONEPAD10": "OnePlus Pad X"
-};
+},
 
-const APPLE_MODELS = {
+apple: {
   "A1660": "iPhone 7",
   "A1778": "iPhone 7 Plus",
   "A1865": "iPhone X",
@@ -620,4 +627,74 @@ const APPLE_MODELS = {
   "A2378": "iPad Pro 12.9-inch (5th Gen)",
   "A2229": "iPad Pro 12.9-inch (4th Gen)",
   "A2316": "iPad Mini 6th Gen"
+  }
 };
+
+for (const brand in DEVICE_MODELS) {
+  const seen = new Set();
+  const filtered = {};
+  for (const code in DEVICE_MODELS[brand]) {
+    if (!seen.has(code)) {
+      filtered[code] = DEVICE_MODELS[brand][code];
+      seen.add(code);
+    }
+  }
+  DEVICE_MODELS[brand] = filtered;
+}
+
+const DESKTOP_MARKERS = ["Windows NT", "Macintosh", "X11", "Linux x86_64", "Ubuntu"];
+const TABLET_MARKERS = [
+  "iPad", "Tablet", "Tab", "SM-T", "Lenovo TB", "MediaPad", "Mi Pad", "ONEPAD", "Pad", "TB", "AGS3", "BAH3", "MRX", "BG2", "TNN"
+];
+const MOBILE_MARKERS = [
+  "Android", "iPhone", "iPod", "MIUI", "Redmi", "Huawei", "TECNO", "INFINIX", "OnePlus", "Realme", "Vivo"
+];
+
+const MODEL_REGEXES = [
+  /\b([A-Z0-9\-]{4,})\b/gi, 
+  /\bA\d{4}\b/gi            
+];
+
+const FLAT_MODELS = {};
+for (const brand in DEVICE_MODELS) {
+  Object.assign(FLAT_MODELS, DEVICE_MODELS[brand]);
+}
+
+function findDeviceModel(userAgent) {
+  for (const regex of MODEL_REGEXES) {
+    const matches = userAgent.match(regex);
+    if (matches) {
+      for (const code of matches) {
+        const cleanCode = code.replace(/[^A-Z0-9\-]/gi, "");
+        if (FLAT_MODELS[cleanCode]) {
+          return FLAT_MODELS[cleanCode];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function parseDevice(userAgent) {
+  if (!userAgent) return { device: "неизвестный", reason: "User-Agent пустой" };
+
+  if (DESKTOP_MARKERS.some(m => userAgent.includes(m))) {
+    return { device: "Десктоп" };
+  }
+
+  if (TABLET_MARKERS.some(m => userAgent.includes(m))) {
+    const model = findDeviceModel(userAgent);
+    if (model) return { device: model };
+    return { device: "Tablet" };
+  }
+
+  if (MOBILE_MARKERS.some(m => userAgent.includes(m))) {
+    const model = findDeviceModel(userAgent);
+    if (model) return { device: model };
+    return { device: "mobile" };
+  }
+
+  return { device: "неизвестный", reason: "Не удалось определить тип устройства" };
+}
+
+module.exports = { parseDevice };
