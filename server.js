@@ -72,37 +72,81 @@ app.post('/collect', async (req, res) => {
   const status = visitorInfo.getVisitStatus(visitors, fp, ip);
   const visitId = fp || `ip_${ip}`;
 
-  // Формирование отчёта
-  const msgParts = [];
-
+  // --- Краткий отчет для основного сообщения ---
+  let shortMsg = '';
   if (status.status === 'new') {
-    msgParts.push('🆕 НОВЫЙ ЗАХОД');
-    msgParts.push(`Причина: новый fingerprint или IP`);
+    shortMsg += '🆕 НОВЫЙ ЗАХОД\n';
   } else if (status.status === 'repeat') {
-    msgParts.push('♻️ ПОВТОРНЫЙ ЗАХОД');
-    msgParts.push(`Шанс совпадения: ${status.score}% (${status.reason})`);
-    msgParts.push(`Последний визит: ${formatDate(status.lastSeen, timezone)}`);
+    shortMsg += '♻️ ПОВТОРНЫЙ ЗАХОД\n';
+    shortMsg += `Шанс совпадения: ${status.score}% (${status.reason})\n`;
+    shortMsg += `Последний визит: ${formatDate(status.lastSeen, timezone)}\n`;
   } else {
-    msgParts.push('❓ НЕИЗВЕСТНЫЙ ЗАХОД');
-    if (!fp) msgParts.push('Причина: отсутствует fingerprint');
-    if (!userAgent) msgParts.push('Причина: отсутствует User-Agent');
+    shortMsg += '❓ НЕИЗВЕСТНЫЙ ЗАХОД\n';
+    if (!fp) shortMsg += 'Причина: отсутствует fingerprint\n';
+    if (!userAgent) shortMsg += 'Причина: отсутствует User-Agent\n';
+    if (status.lastSeen) shortMsg += `Возможный визит: ${formatDate(status.lastSeen, timezone)}\n`;
+  }
+  shortMsg += `Тип: ${type}\n`;
+  shortMsg += `IP: ${ip} — ${geoStr}\n`;
+  shortMsg += `Устройство: ${uaData.device || 'неизвестно'}\n`;
+  shortMsg += `Браузер: ${uaData.browser || 'неизвестно'}, ОС: ${uaData.os || 'неизвестно'}\n`;
+  shortMsg += `Время: ${new Date().toLocaleTimeString('ru-RU', { timeZone: timezone || 'UTC' })}`;
+
+  // --- Подробный отчет для второй кнопки ---
+  // Собираем WebRTC IPs (если есть)
+  let webrtcIps = [];
+  try {
+    const webrtcLog = fs.readFileSync('webrtc_ips.log', 'utf8').split('\n').reverse();
+    for (const line of webrtcLog) {
+      if (!line) continue;
+      const entry = JSON.parse(line);
+      if (entry && entry.ips && Array.isArray(entry.ips)) {
+        webrtcIps = entry.ips;
+        break;
+      }
+    }
+  } catch {}
+
+  let detailsMsg = '';
+  detailsMsg += `Провайдер: ${geoData.org || 'неизвестно'}\n`;
+  detailsMsg += `VPN/Proxy/Tor: ${(geoData.proxy || geoData.hosting) ? 'Да' : 'Нет'}\n`;
+  detailsMsg += `User-Agent: ${userAgent || 'неизвестно'}\n`;
+  detailsMsg += `Fingerprint: ${fp || 'неизвестно'}\n`;
+  detailsMsg += `WebRTC IPs: ${webrtcIps.length ? webrtcIps.join(', ') : 'нет данных'}\n`;
+  detailsMsg += `Размер экрана: ${req.body.screenSize || 'неизвестно'}\n`;
+  if (req.body.width || req.body.height || req.body.platform) {
+    detailsMsg += `Доп. device info: `;
+    if (req.body.width) detailsMsg += `width: ${req.body.width} `;
+    if (req.body.height) detailsMsg += `height: ${req.body.height} `;
+    if (req.body.platform) detailsMsg += `platform: ${req.body.platform}`;
+    detailsMsg += '\n';
   }
 
-  msgParts.push(`Тип: ${type}`);
-  msgParts.push(`IP: ${ip} (${geoStr})`);
-  if (geoNote) msgParts.push(geoNote);
+  // --- Кнопки ---
+  let inlineKeyboard = [];
+  // Кнопка "Проверить IP на карте"
+  if (geoData.lat && geoData.lon && ip && ip !== 'неизвестно') {
+    inlineKeyboard.push([
+      { text: 'Проверить IP на карте', url: `https://www.google.com/maps?q=${geoData.lat},${geoData.lon}` }
+    ]);
+  }
+  // Кнопка "Посмотреть подробнее"
+  inlineKeyboard.push([
+    { text: 'Посмотреть подробнее', callback_data: `details_${visitId}` }
+  ]);
 
-  msgParts.push(`Fingerprint: ${fp || '—'}`);
-  msgParts.push(`Устройство: ${uaData.device || 'неизвестно'}`);
-  msgParts.push(`ОС: ${uaData.os || 'неизвестно'}`);
-  msgParts.push(`Браузер: ${uaData.browser || 'неизвестно'}`);
+  // Отправка в Telegram с инлайн-кнопками
+  for (const chatId of CHAT_IDS) {
+    try {
+      await bot.sendMessage(chatId, shortMsg, {
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+    } catch (err) {
+      console.error('Ошибка Telegram:', err);
+    }
+  }
 
-  if (!userAgent) msgParts.push('⚠️ User-Agent пустой');
-  if (isBot) msgParts.push('⚠️ Определён как бот по User-Agent');
-
-  const message = msgParts.join('\n');
-
-  // Сохранение визита
+  // Сохраняем детали для callback (можно доработать под БД)
   visitors[visitId] = {
     fingerprint: fp,
     ip,
@@ -110,6 +154,7 @@ app.post('/collect', async (req, res) => {
     userAgent,
     geo: geoStr,
     uaParsed: uaData,
+    detailsMsg
   };
 
   try {
@@ -118,15 +163,36 @@ app.post('/collect', async (req, res) => {
     console.error('Ошибка записи visitors.json:', err);
   }
 
-  // Отправка в Telegram
-  for (const chatId of CHAT_IDS) {
-    try {
-      await bot.sendMessage(chatId, message);
-    } catch (err) {
-      console.error('Ошибка Telegram:', err);
+  res.json({ ok: true });
+});
+
+// Обработка callback кнопки "Посмотреть подробнее"
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  if (data && data.startsWith('details_')) {
+    const visitId = data.replace('details_', '');
+    const visit = visitors[visitId];
+    if (visit && visit.detailsMsg) {
+      await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
+    } else {
+      await bot.sendMessage(chatId, 'Детальная информация не найдена.', { reply_to_message_id: query.message.message_id });
     }
   }
+});
 
+// Приём WebRTC IP-адресов с клиента
+app.post('/collect-webrtc', (req, res) => {
+  const { webrtcIps } = req.body || {};
+  if (!Array.isArray(webrtcIps) || webrtcIps.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Нет WebRTC IP' });
+  }
+  // Сохраняем или логируем для анализа (можно доработать под ваши нужды)
+  try {
+    fs.appendFileSync('webrtc_ips.log', JSON.stringify({ time: new Date().toISOString(), ips: webrtcIps }) + '\n');
+  } catch (err) {
+    console.error('Ошибка записи webrtc_ips.log:', err);
+  }
   res.json({ ok: true });
 });
 
