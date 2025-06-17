@@ -160,6 +160,30 @@ async function analyzeVisitor({ ip, headers }) {
     };
 }
 
+// Получение геоданных по IP (асинхронно)
+async function getGeo(ip) {
+    ip = ipv6to4(ip);
+    let ipInfo = null;
+    for (const svc of ipServices) {
+        ipInfo = await svc(ip);
+        if (ipInfo) break;
+    }
+    if (!ipInfo) ipInfo = { ip };
+    let location = '';
+    if (ipInfo.country && ipInfo.city) location = `${ipInfo.country}, ${ipInfo.city}`;
+    else if (ipInfo.country) location = ipInfo.country;
+    return {
+        ...ipInfo,
+        location,
+        lat: ipInfo.lat || (ipInfo.loc ? ipInfo.loc.split(',')[0] : undefined),
+        lon: ipInfo.lon || (ipInfo.loc ? ipInfo.loc.split(',')[1] : undefined),
+        org: ipInfo.org,
+        proxy: ipInfo.proxy,
+        hosting: ipInfo.hosting,
+        cached: false // если нужно, можно добавить кэширование
+    };
+}
+
 // Проверка, является ли IP GoogleBot'ом (или другим крупным ботом)
 function isGoogleIP(ip) {
     // Проверка по основным диапазонам Google (можно расширять при необходимости)
@@ -184,5 +208,6 @@ function isGoogleIP(ip) {
 module.exports = {
     analyzeVisitor,
     extractIPv4,
-    isGoogleIP
+    isGoogleIP,
+    getGeo
 };
