@@ -263,6 +263,12 @@ samsung: {
   "SM-T720": "Samsung Galaxy Tab S5e",
   "SM-T725": "Samsung Galaxy Tab S7+",
   "SM-T970": "Samsung Galaxy Tab S7",
+  "SM-T976B": "Samsung Galaxy Tab S7 FE 5G",
+  "SM-T510": "Samsung Galaxy Tab A7 10.4",
+  "SM-T515": "Samsung Galaxy Tab A7 10.4 2020",
+  "SM-T720": "Samsung Galaxy Tab S5e",
+  "SM-T725": "Samsung Galaxy Tab S7+",
+  "SM-T970": "Samsung Galaxy Tab S7",
   "SM-T976B": "Samsung Galaxy Tab S7 FE 5G"
 },
 
@@ -697,4 +703,4 @@ function parseDevice(userAgent) {
   return { device: "неизвестный", reason: "Не удалось определить тип устройства" };
 }
 
-module.exports = { parseDevice };
+module.exports = parseDevice;
