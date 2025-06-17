@@ -31,6 +31,7 @@ try {
   }
 } catch (err) {
   console.error('Ошибка чтения visitors.json:', err);
+  visitors = {};
 }
 
 // ROUTES
@@ -172,7 +173,17 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   if (data && data.startsWith('details_')) {
     const visitId = data.replace('details_', '');
-    const visit = visitors[visitId];
+    // перечитываем visitors.json с диска для актуальности
+    let freshVisitors = {};
+    try {
+      if (fs.existsSync(VISITORS_FILE)) {
+        freshVisitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+      }
+    } catch (err) {
+      console.error('Ошибка чтения visitors.json:', err);
+      freshVisitors = {};
+    }
+    const visit = freshVisitors[visitId];
     if (visit && visit.detailsMsg) {
       await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
     } else {
