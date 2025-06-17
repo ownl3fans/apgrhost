@@ -205,9 +205,37 @@ function isGoogleIP(ip) {
     return googleRanges.some(rx => rx.test(ip));
 }
 
+// Определение статуса визита (новый, повторный, неизвестный)
+function getVisitStatus(visitors, fingerprint, ip) {
+    // Если нет fingerprint и ip — неизвестно
+    if (!fingerprint && !ip) return { status: 'unknown', reason: 'Нет fingerprint и IP' };
+    // Если fingerprint есть в базе — повторный
+    if (fingerprint && visitors[fingerprint]) {
+        return {
+            status: 'repeat',
+            score: 100,
+            reason: 'Fingerprint совпал',
+            lastSeen: visitors[fingerprint].time
+        };
+    }
+    // Если ip есть в базе — повторный (но менее надёжно)
+    const ipKey = `ip_${ip}`;
+    if (ip && visitors[ipKey]) {
+        return {
+            status: 'repeat',
+            score: 70,
+            reason: 'IP совпал',
+            lastSeen: visitors[ipKey].time
+        };
+    }
+    // Новый визит
+    return { status: 'new', reason: 'Новый fingerprint или IP' };
+}
+
 module.exports = {
     analyzeVisitor,
     extractIPv4,
     isGoogleIP,
-    getGeo
+    getGeo,
+    getVisitStatus
 };
