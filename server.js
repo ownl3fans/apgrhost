@@ -125,23 +125,26 @@ app.post('/collect', async (req, res) => {
 
   // --- Кнопки ---
   let inlineKeyboard = [];
-  // Кнопка "Проверить IP на карте"
-  if (geoData.lat && geoData.lon && ip && ip !== 'неизвестно') {
-    inlineKeyboard.push([
-      { text: 'Проверить IP на карте', url: `https://www.google.com/maps?q=${geoData.lat},${geoData.lon}` }
-    ]);
-  }
   // Кнопка "Посмотреть подробнее"
   inlineKeyboard.push([
     { text: 'Посмотреть подробнее', callback_data: `details_${visitId}` }
   ]);
 
-  // Отправка в Telegram с инлайн-кнопками
+  // Отправка в Telegram: карта с отчетом в подписи, затем кнопка
   for (const chatId of CHAT_IDS) {
     try {
-      await bot.sendMessage(chatId, shortMsg, {
-        reply_markup: { inline_keyboard: inlineKeyboard }
-      });
+      if (geoData.lat && geoData.lon && ip && ip !== 'неизвестно') {
+        await bot.sendLocation(chatId, geoData.lat, geoData.lon, {
+          caption: shortMsg
+        });
+        await bot.sendMessage(chatId, '👇', {
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
+      } else {
+        await bot.sendMessage(chatId, shortMsg, {
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
+      }
     } catch (err) {
       console.error('Ошибка Telegram:', err);
     }
