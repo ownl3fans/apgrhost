@@ -1,4 +1,3 @@
-
 function buildShortReport({ status, fp, userAgent, timezone, type, ip, geoStr, uaData }) {
   let shortMsg = '';
   if (status.status === 'new') {
