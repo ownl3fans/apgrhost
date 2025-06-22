@@ -44,8 +44,22 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 
 bot.onText(/\/stats/, async (msg) => {
   try {
-    const count = await mongo.getVisitorsCount();
-    bot.sendMessage(msg.chat.id, `📊 Всего визитов: ${count}`);
+    const visitors = await mongo.getAllVisitors();
+    const today = new Date().toISOString().slice(0, 10);
+    let total = 0, bots = 0, pc = 0, mobile = 0;
+    for (const v of visitors) {
+      if (!v.time || !v.uaParsed) continue;
+      if (!v.time.startsWith(today)) continue;
+      total++;
+      if (v.type === '🤖 Бот') bots++;
+      else if (v.uaParsed.device && v.uaParsed.device.toLowerCase().includes('десктоп')) pc++;
+      else if (v.uaParsed.device && (v.uaParsed.device.toLowerCase().includes('android') || v.uaParsed.device.toLowerCase().includes('iphone') || v.uaParsed.device.toLowerCase().includes('mobile'))) mobile++;
+    }
+    let msgText = `Статистика за сегодня\n`;
+    msgText += `Всего заходов: ${total}, из них боты: ${bots}\n`;
+    msgText += `ПК: ${pc}, телефоны: ${mobile}\n`;
+    msgText += `\nСпасибо, что пользуетесь APGRHOST!`;
+    bot.sendMessage(msg.chat.id, msgText);
   } catch (err) {
     console.error('Ошибка MongoDB /stats:', err);
     bot.sendMessage(msg.chat.id, 'Ошибка при получении статистики.');
@@ -124,7 +138,14 @@ app.post('/collect', async (req, res) => {
     screenSize: req.body.screenSize,
     width: req.body.width,
     height: req.body.height,
-    platform: req.body.platform
+    platform: req.body.platform,
+    language: req.body.language,
+    timezone: req.body.timezone,
+    clientTime: req.body.clientTime,
+    uaParsed: uaData,
+    hardwareConcurrency: req.body.hardwareConcurrency,
+    deviceMemory: req.body.deviceMemory,
+    touchSupport: req.body.touchSupport
   });
 
   const inlineKeyboard = reportInfo.buildInlineKeyboard(visitId);
