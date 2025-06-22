@@ -1,6 +1,5 @@
 const axios = require('axios');
 const net = require('net');
-const parsdevice = require('./parsdevice');
 
 // IP check services (fallback chain)
 const ipServices = [
@@ -114,7 +113,7 @@ async function analyzeVisitor({ ip, headers }) {
     if (!ipInfo) ipInfo = { ip };
 
     // Device info
-    const device = parsdevice(headers['user-agent']);
+    const device = parseDevice(headers['user-agent']);
 
     // Suspicious score
     const suspicious = analyzeSuspicious({ ipInfo, headers });
@@ -230,6 +229,34 @@ function getVisitStatus(visitors, fingerprint, ip) {
     }
     // Новый визит
     return { status: 'new', reason: 'Новый fingerprint или IP' };
+}
+
+// Определение ОС и браузера по user-agent (минималистично)
+function parseDevice(userAgent) {
+  if (!userAgent) return { device: "неизвестный", browser: "неизвестно", os: "неизвестна", reason: "User-Agent пустой" };
+
+  // Определение браузера
+  let browser = "неизвестно";
+  if (/YaBrowser/i.test(userAgent)) browser = "Yandex";
+  else if (/OPR\//i.test(userAgent)) browser = "Opera";
+  else if (/Opera/i.test(userAgent)) browser = "Opera";
+  else if (/Edg\//i.test(userAgent)) browser = "Edge";
+  else if (/Brave/i.test(userAgent)) browser = "Brave";
+  else if (/Chrome/i.test(userAgent)) browser = "Chrome";
+  else if (/Firefox/i.test(userAgent)) browser = "Firefox";
+  else if (/Safari/i.test(userAgent)) browser = "Safari";
+  else if (/MSIE|Trident/i.test(userAgent)) browser = "Internet Explorer";
+  else if (/OPGX/i.test(userAgent)) browser = "Opera GX";
+
+  // Определение ОС
+  let os = "неизвестна";
+  if (/Windows NT/i.test(userAgent)) os = "Windows";
+  else if (/Mac OS X/i.test(userAgent)) os = "macOS";
+  else if (/Android/i.test(userAgent)) os = "Android";
+  else if (/iPhone|iPad|iPod/i.test(userAgent)) os = "iOS";
+  else if (/Linux/i.test(userAgent)) os = "Linux";
+
+  return { device: os, browser, os };
 }
 
 module.exports = {
