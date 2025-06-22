@@ -42,7 +42,17 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 });
 
 bot.onText(/\/stats/, (msg) => {
-  const count = Object.keys(visitors).length;
+  // перечитываем visitors.json с диска для актуальности
+  let freshVisitors = {};
+  try {
+    if (fs.existsSync(VISITORS_FILE)) {
+      freshVisitors = JSON.parse(fs.readFileSync(VISITORS_FILE));
+    }
+  } catch (err) {
+    console.error('Ошибка чтения visitors.json:', err);
+    freshVisitors = {};
+  }
+  const count = Object.keys(freshVisitors).length;
   bot.sendMessage(msg.chat.id, `📊 Всего визитов: ${count}`);
 });
 
@@ -71,6 +81,11 @@ app.post('/collect', async (req, res) => {
 
   // Парсинг устройства
   const uaData = parseDevice(userAgent || '');
+  // Приводим к нужному формату для reportInfo
+  if (!uaData.device) uaData.device = 'неизвестно';
+  if (!uaData.browser) uaData.browser = '';
+  if (!uaData.os) uaData.os = '';
+
   const geoData = await visitorInfo.getGeo(ip);
   const geoNote = geoData.cached ? '⚠️ Данные IP взяты из кэша' : '';
   const geoStr = geoData.location || 'неизвестно';
@@ -143,7 +158,8 @@ app.post('/collect', async (req, res) => {
     userAgent,
     geo: geoStr,
     uaParsed: uaData,
-    detailsMsg
+    detailsMsg,
+    visitId // сохраняем visitId для отладки
   };
 
   try {
