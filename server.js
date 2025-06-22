@@ -194,7 +194,7 @@ bot.on('callback_query', async (query) => {
       // Debug output for diagnosis
       console.error('Детальная информация не найдена для visitId:', visitId);
       console.error('Доступные visitId:', Object.keys(freshVisitors));
-      await bot.sendMessage(chatId, 'Детальная информация не найдена.', { reply_to_message_id: query.message.message_id });
+      await bot.sendMessage(chatId, 'Детальная информация не найдена. Проверьте, что визит был зафиксирован и сохранён.', { reply_to_message_id: query.message.message_id });
     }
   }
 });
