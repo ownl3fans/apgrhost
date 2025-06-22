@@ -257,12 +257,6 @@ samsung: {
   "SM-T720": "Samsung Galaxy Tab S5e",
   "SM-T725": "Samsung Galaxy Tab S7+",
   "SM-T970": "Samsung Galaxy Tab S7",
-  "SM-T976B": "Samsung Galaxy Tab S7 FE 5G",
-  "SM-T510": "Samsung Galaxy Tab A7 10.4",
-  "SM-T515": "Samsung Galaxy Tab A7 10.4 2020",
-  "SM-T720": "Samsung Galaxy Tab S5e",
-  "SM-T725": "Samsung Galaxy Tab S7+",
-  "SM-T970": "Samsung Galaxy Tab S7",
   "SM-T976B": "Samsung Galaxy Tab S7 FE 5G"
 },
 
@@ -699,18 +693,21 @@ function parseDevice(userAgent) {
   else if (/iPhone|iPad|iPod/i.test(userAgent)) os = "iOS";
   else if (/Linux/i.test(userAgent)) os = "Linux";
 
-  if (DESKTOP_MARKERS.some(m => userAgent.includes(m))) {
-    return { device: "Десктоп", browser, os };
+  // Fallback для мобильных устройств
+  if (MOBILE_MARKERS.some(m => userAgent.includes(m))) {
+    const model = findDeviceModel(userAgent);
+    if (model) return { device: model, browser, os };
+    if (/Android/i.test(userAgent)) return { device: "Android-смартфон", browser, os };
+    if (/iPhone/i.test(userAgent)) return { device: "iPhone", browser, os };
+    return { device: "mobile", browser, os };
   }
   if (TABLET_MARKERS.some(m => userAgent.includes(m))) {
     const model = findDeviceModel(userAgent);
     if (model) return { device: model, browser, os };
     return { device: "Tablet", browser, os };
   }
-  if (MOBILE_MARKERS.some(m => userAgent.includes(m))) {
-    const model = findDeviceModel(userAgent);
-    if (model) return { device: model, browser, os };
-    return { device: "mobile", browser, os };
+  if (DESKTOP_MARKERS.some(m => userAgent.includes(m))) {
+    return { device: "Десктоп", browser, os };
   }
   return { device: "неизвестный", browser, os, reason: "Не удалось определить тип устройства" };
 }
