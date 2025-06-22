@@ -46,7 +46,12 @@ bot.onText(/\/stats/, (msg) => {
   bot.sendMessage(msg.chat.id, `📊 Всего визитов: ${count}`);
 });
 
-app.get('/ping-bot', (_, res) => res.send('OK'));
+app.get('/ping-bot', (req, res) => {
+  const now = new Date().toISOString();
+  const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || '';
+  console.log(`[PING] ${now} - Пинг от IP: ${ip}`);
+  res.send('OK');
+});
 
 app.post('/collect', async (req, res) => {
   const { fingerprint: fp, userAgent, timezone, clientTime } = req.body || {};
