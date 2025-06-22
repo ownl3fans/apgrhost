@@ -5,7 +5,6 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const fingerprint = require('./modules/fingerprint');
 const visitorInfo = require('./modules/visitorinfo');
-const parseDevice = require('./modules/parsdevice');
 const reportInfo = require('./modules/reportinfo');
 const mongo = require('./modules/mongo');
 
@@ -90,7 +89,7 @@ app.post('/collect', async (req, res) => {
   const type = isBot ? '🤖 Бот' : '👤 Человек';
 
   // Парсинг устройства
-  const uaData = parseDevice(userAgent || '');
+  const uaData = visitorInfo.parseDevice(userAgent || '');
   if (!uaData.device) uaData.device = 'неизвестно';
   if (!uaData.browser) uaData.browser = '';
   if (!uaData.os) uaData.os = '';
