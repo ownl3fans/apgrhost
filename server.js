@@ -2,7 +2,6 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
-const rateLimit = require('express-rate-limit');
 
 const visitorInfo = require('./modules/visitorinfo');
 const reportInfo = require('./modules/reportinfo');
@@ -34,16 +33,6 @@ try {
   console.error('Ошибка чтения visitors.json:', err);
   visitors = {};
 }
-
-// Rate limiting middleware (100 запросов с одного IP за 15 минут)
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
-  max: 100, // максимум 100 запросов
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Слишком много запросов с этого IP, попробуйте позже.'
-});
-app.use(limiter);
 
 // Логирование всех запросов
 app.use((req, res, next) => {
