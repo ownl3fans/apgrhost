@@ -111,8 +111,23 @@ app.post('/collect', async (req, res) => {
   const geoNote = geoData.cached ? '⚠️ Данные IP взяты из кэша' : '';
   const geoStr = geoData.location || 'неизвестно';
 
-  // Определение статуса визита
-  const status = visitorInfo.getVisitStatus({}, fp, ip); // пустой объект, Mongo теперь источник
+  // --- Определение статуса визита через MongoDB ---
+  let status = { status: 'new', reason: 'Новый fingerprint или IP' };
+  try {
+    let prevVisit = null;
+    if (fp) prevVisit = await mongo.getVisitor(fp);
+    if (!prevVisit && ip) prevVisit = await mongo.getVisitor(`ip_${ip}`);
+    if (prevVisit) {
+      status = {
+        status: 'repeat',
+        score: 100,
+        reason: prevVisit.fingerprint === fp ? 'Fingerprint совпал' : 'IP совпал',
+        lastSeen: prevVisit.time
+      };
+    }
+  } catch (err) {
+    console.error('[MongoDB] Ошибка при поиске предыдущего визита:', err);
+  }
   const visitId = fp || `ip_${ip}`;
 
   // --- Краткий отчет для основного сообщения ---
@@ -186,7 +201,8 @@ app.post('/collect', async (req, res) => {
       geo: geoStr,
       uaParsed: uaData,
       detailsMsg,
-      visitId
+      visitId,
+      type // <--- сохраняем тип (бот/человек)
     });
   } catch (err) {
     console.error('Ошибка сохранения визита в MongoDB:', err);
