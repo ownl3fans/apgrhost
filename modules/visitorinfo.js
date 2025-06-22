@@ -264,5 +264,6 @@ module.exports = {
     extractIPv4,
     isGoogleIP,
     getGeo,
-    getVisitStatus
+    getVisitStatus,
+    parseDevice
 };
