@@ -20,12 +20,16 @@ function buildShortReport({ status, fp, userAgent, timezone, type, ip, geoStr, u
   return shortMsg;
 }
 
-function buildDetailsReport({ geoData, userAgent, fp, webrtcIps, ip, screenSize, width, height, platform }) {
+function buildDetailsReport({ geoData, userAgent, fp, webrtcIps, ip, screenSize, width, height, platform, language, timezone, clientTime, uaParsed, hardwareConcurrency, deviceMemory, touchSupport }) {
   let detailsMsg = '';
+  detailsMsg += `Fingerprint: ${fp || 'неизвестно'}\n`;
+  detailsMsg += `User-Agent: ${userAgent || 'неизвестно'}\n`;
+  detailsMsg += `Язык браузера: ${language || 'неизвестно'}\n`;
+  detailsMsg += `Время на ПК: ${clientTime || 'неизвестно'}\n`;
+  detailsMsg += `Временная зона: ${timezone || 'неизвестно'}\n`;
+  detailsMsg += `IP: ${ip || 'неизвестно'}\n`;
   detailsMsg += `Провайдер: ${geoData?.org || 'неизвестно'}\n`;
   detailsMsg += `VPN/Proxy/Tor: ${(geoData?.proxy || geoData?.hosting) ? 'Да' : 'Нет'}\n`;
-  detailsMsg += `User-Agent: ${userAgent || 'неизвестно'}\n`;
-  detailsMsg += `Fingerprint: ${fp || 'неизвестно'}\n`;
   if (Array.isArray(webrtcIps) && webrtcIps.length) {
     let webrtcNote = '';
     if (ip && webrtcIps.some(wip => wip !== ip)) {
@@ -42,13 +46,15 @@ function buildDetailsReport({ geoData, userAgent, fp, webrtcIps, ip, screenSize,
   } else {
     detailsMsg += 'Размер экрана: неизвестно\n';
   }
-  if (width || height || platform) {
-    detailsMsg += 'Доп. device info: ';
-    if (width) detailsMsg += `width: ${width} `;
-    if (height) detailsMsg += `height: ${height} `;
-    if (platform) detailsMsg += `platform: ${platform}`;
-    detailsMsg += '\n';
+  if (platform) detailsMsg += `Платформа: ${platform}\n`;
+  if (uaParsed && typeof uaParsed === 'object') {
+    detailsMsg += `Тип устройства: ${uaParsed.device || 'неизвестно'}\n`;
+    detailsMsg += `Браузер: ${uaParsed.browser || 'неизвестно'}\n`;
+    detailsMsg += `ОС: ${uaParsed.os || 'неизвестно'}\n`;
   }
+  if (typeof hardwareConcurrency !== 'undefined') detailsMsg += `Потоков CPU: ${hardwareConcurrency}\n`;
+  if (typeof deviceMemory !== 'undefined') detailsMsg += `ОЗУ (ГБ): ${deviceMemory}\n`;
+  if (typeof touchSupport !== 'undefined') detailsMsg += `Touch: ${touchSupport ? 'да' : 'нет'}\n`;
   return detailsMsg;
 }
 
