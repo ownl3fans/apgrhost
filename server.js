@@ -5,7 +5,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const visitorInfo = require('./modules/visitorinfo');
 const reportInfo = require('./modules/reportinfo');
-const mongo = require('./modules/pgbd');
+const mongo = require('./modules/pgdb');
 
 const app = express();
 app.use(express.json());
