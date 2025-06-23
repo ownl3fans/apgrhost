@@ -5,7 +5,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 const visitorInfo = require('./modules/visitorinfo');
 const reportInfo = require('./modules/reportinfo');
-const mongo = require('./modules/pgdb');
+const pgdb = require('./modules/pgdb');
 
 const app = express();
 app.use(express.json());
@@ -54,8 +54,9 @@ bot.onText(/\/(\w+)/, async (msg, match) => {
 });
 
 bot.onText(/\/stats/, async (msg) => {
+  console.log(`[TELEGRAM] Обработчик /stats вызван от chatId: ${msg.chat.id}`);
   try {
-    const visitors = await mongo.getAllVisitors();
+    const visitors = await pgdb.getAllVisitors();
     const today = new Date().toISOString().slice(0, 10);
     let total = 0, bots = 0, pc = 0, mobile = 0;
     for (const v of visitors) {
@@ -72,7 +73,7 @@ bot.onText(/\/stats/, async (msg) => {
     msgText += `\nСпасибо, что пользуетесь APGRHOST!`;
     bot.sendMessage(msg.chat.id, msgText);
   } catch (err) {
-    console.error('Ошибка MongoDB /stats:', err);
+    console.error('Ошибка PostgreSQL /stats:', err);
     bot.sendMessage(msg.chat.id, 'Ошибка при получении статистики.');
   }
 });
@@ -111,12 +112,12 @@ app.post('/collect', async (req, res) => {
   const geoNote = geoData.cached ? '⚠️ Данные IP взяты из кэша' : '';
   const geoStr = geoData.location || 'неизвестно';
 
-  // --- Определение статуса визита через MongoDB ---
+  // --- Определение статуса визита через PostgreSQL ---
   let status = { status: 'new', reason: 'Новый fingerprint или IP' };
   try {
     let prevVisit = null;
-    if (fp) prevVisit = await mongo.getVisitor(fp);
-    if (!prevVisit && ip) prevVisit = await mongo.getVisitor(`ip_${ip}`);
+    if (fp) prevVisit = await pgdb.getVisitor(fp);
+    if (!prevVisit && ip) prevVisit = await pgdb.getVisitor(`ip_${ip}`);
     if (prevVisit) {
       status = {
         status: 'repeat',
@@ -126,7 +127,7 @@ app.post('/collect', async (req, res) => {
       };
     }
   } catch (err) {
-    console.error('[MongoDB] Ошибка при поиске предыдущего визита:', err);
+    console.error('[PostgreSQL] Ошибка при поиске предыдущего визита:', err);
   }
   const visitId = fp || `ip_${ip}`;
 
@@ -191,9 +192,9 @@ app.post('/collect', async (req, res) => {
     }
   }
 
-  // Сохраняем визит в MongoDB
+  // Сохраняем визит в PostgreSQL
   try {
-    await mongo.saveVisitor(visitId, {
+    await pgdb.saveVisitor(visitId, {
       fingerprint: fp,
       ip,
       time: new Date().toISOString(),
@@ -205,7 +206,7 @@ app.post('/collect', async (req, res) => {
       type // <--- сохраняем тип (бот/человек)
     });
   } catch (err) {
-    console.error('Ошибка сохранения визита в MongoDB:', err);
+    console.error('Ошибка сохранения визита в PostgreSQL:', err);
   }
 
   res.json({ ok: true });
@@ -217,9 +218,10 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   console.log(`[TELEGRAM] Callback: ${data} от chatId: ${chatId}`);
   if (data && data.startsWith('details_')) {
+    console.log(`[TELEGRAM] Обработчик details_ вызван для visitId: ${data.replace('details_', '')}, chatId: ${chatId}`);
     const visitId = data.replace('details_', '');
     try {
-      const visit = await mongo.getVisitor(visitId);
+      const visit = await pgdb.getVisitor(visitId);
       if (visit && visit.detailsMsg) {
         await bot.sendMessage(chatId, visit.detailsMsg, { reply_to_message_id: query.message.message_id });
       } else {
@@ -227,7 +229,7 @@ bot.on('callback_query', async (query) => {
         await bot.sendMessage(chatId, 'Детальная информация не найдена. Проверьте, что визит был зафиксирован и сохранён.', { reply_to_message_id: query.message.message_id });
       }
     } catch (err) {
-      console.error('Ошибка MongoDB details:', err, 'visitId:', visitId, 'chatId:', chatId);
+      console.error('Ошибка PostgreSQL details:', err, 'visitId:', visitId, 'chatId:', chatId);
       await bot.sendMessage(chatId, 'Ошибка при получении деталей визита.', { reply_to_message_id: query.message.message_id });
     }
   } else {
