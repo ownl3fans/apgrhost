@@ -1,7 +1,9 @@
 // MongoDB connection helper for apgrhost
 const { MongoClient } = require('mongodb');
 
-const uri = process.env.MONGODB_URI;
+const uri = (process.env.MONGODB_URI?.includes('tls=true'))
+  ? process.env.MONGODB_URI
+  : (process.env.MONGODB_URI ? process.env.MONGODB_URI + (process.env.MONGODB_URI.includes('?') ? '&' : '?') + 'tls=true' : undefined);
 console.debug('[MongoDB][DEBUG] uri:', uri);
 if (!uri) {
   console.error('[MongoDB] Не задана переменная окружения MONGODB_URI! Соединение с базой невозможно.');
